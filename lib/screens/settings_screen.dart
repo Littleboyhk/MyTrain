@@ -192,17 +192,11 @@ class _ThemeOption extends StatelessWidget {
           curve: Motion.standard,
           padding: const EdgeInsets.symmetric(vertical: 20),
           decoration: BoxDecoration(
-            gradient: selected
-                ? AppColors.accentGradient
-                : LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [AppColors.glassHighlight, AppColors.glassFill],
-                    stops: const [0.0, 0.7],
-                  ),
+            gradient: selected ? AppColors.accentGradient : null,
+            color: selected ? null : AppColors.surfaceElevated,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: selected ? Colors.transparent : AppColors.glassStroke,
+              color: selected ? Colors.transparent : AppColors.lineMuted,
             ),
             boxShadow: selected
                 ? AppColors.glow(AppColors.accent, opacity: 0.32, blur: 16)

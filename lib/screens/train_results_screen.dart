@@ -183,14 +183,9 @@ class _TrainCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AppColors.glassHighlight, AppColors.glassFill],
-              stops: const [0.0, 0.7],
-            ),
+            color: AppColors.surfaceElevated,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.glassStroke),
+            border: Border.all(color: AppColors.lineMuted),
             boxShadow: AppColors.floatingShadow(blur: 20, y: 8, opacity: 0.28),
           ),
           child: Column(

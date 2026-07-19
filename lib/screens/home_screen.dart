@@ -15,6 +15,7 @@ import '../widgets/liquid_glass.dart';
 import '../widgets/liquid_glass_button.dart';
 import '../widgets/pressable.dart';
 import 'live_tracking_screen.dart';
+import 'pnr_status_screen.dart';
 import 'settings_screen.dart';
 import 'station_picker_screen.dart';
 import 'train_results_screen.dart';
@@ -204,6 +205,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ],
           ),
         ),
+        IconActionButton(
+          icon: Icons.confirmation_number_rounded,
+          size: 46,
+          iconSize: 22,
+          onTap: () => Navigator.of(context).push(
+            CupertinoPageRoute(builder: (_) => const PnrStatusScreen()),
+          ),
+        ),
+        const SizedBox(width: 10),
         IconActionButton(
           icon: Icons.tune_rounded,
           size: 46,
@@ -417,17 +427,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         padding: const EdgeInsets.symmetric(vertical: 10),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          gradient: selected
-              ? AppColors.accentGradient
-              : LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppColors.glassHighlight, AppColors.glassFill],
-                  stops: const [0.0, 0.7],
-                ),
+          gradient: selected ? AppColors.accentGradient : null,
+          color: selected ? null : AppColors.surfaceElevated,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? Colors.transparent : AppColors.glassStroke,
+            color: selected ? Colors.transparent : AppColors.lineMuted,
           ),
         ),
         child: Column(
@@ -663,14 +667,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         width: 210,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [AppColors.glassHighlight, AppColors.glassFill],
-            stops: const [0.0, 0.7],
-          ),
+          color: AppColors.surfaceElevated,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.glassStroke),
+          border: Border.all(color: AppColors.lineMuted),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
