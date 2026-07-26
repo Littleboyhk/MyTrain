@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,7 +11,21 @@ import '../config/supabase_config.dart';
 /// Cell-tower (coarse, battery-friendly) vs GPS (fine, shows speed).
 enum CrowdMode { cell, gps }
 
-enum CrowdStartResult { started, serviceDisabled, denied, deniedForever }
+enum CrowdStartResult {
+  started,
+  serviceDisabled,
+  denied,
+  deniedForever,
+
+  /// A step took too long (permission prompt never answered, or no GPS fix).
+  /// Every await in [CrowdSharingController.start] is bounded so the caller
+  /// always gets a result instead of hanging forever.
+  timedOut,
+
+  /// Something threw — e.g. the location plugin is unavailable on this
+  /// platform. Surfaced so the UI can show a retry instead of spinning.
+  failed,
+}
 
 /// Immutable UI state for the "Inside this train?" sharing session.
 class CrowdSharingState {
@@ -84,43 +99,82 @@ class CrowdSharingController extends Notifier<CrowdSharingState> {
     _timer = null;
   }
 
+  /// Quick platform check — should answer immediately.
+  static const Duration _serviceCheckTimeout = Duration(seconds: 6);
+
+  /// The permission prompt waits on a HUMAN, so it gets a longer leash than the
+  /// network steps — but it is still bounded, because on web an unanswered or
+  /// silently-blocked prompt otherwise never completes.
+  static const Duration _permissionTimeout = Duration(seconds: 20);
+
+  /// Getting a location fix. This was the main hang: `getCurrentPosition()`
+  /// has no implicit timeout.
+  static const Duration _positionTimeout = Duration(seconds: 12);
+
   /// Request permission (only now — never on launch) and begin sharing.
+  ///
+  /// Guarantees a result: every step is bounded by a timeout and all throws are
+  /// converted into [CrowdStartResult.timedOut] / [CrowdStartResult.failed], so
+  /// the caller's button can never spin indefinitely.
   Future<CrowdStartResult> start({
     required String trainNumber,
     required String date,
     required CrowdMode mode,
   }) async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      return CrowdStartResult.serviceDisabled;
-    }
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied) {
-      return CrowdStartResult.denied;
-    }
-    if (permission == LocationPermission.deniedForever) {
-      return CrowdStartResult.deniedForever;
-    }
+    try {
+      final serviceOn = await Geolocator.isLocationServiceEnabled()
+          .timeout(_serviceCheckTimeout);
+      if (!serviceOn) return CrowdStartResult.serviceDisabled;
 
-    _trainNumber = trainNumber;
-    _date = date;
-    _anonId = _rotatingAnonId(); // fresh per session — not tied to identity
-    _lastPosition = null;
-    _stationaryPings = 0;
-    _hadMovement = false;
+      var permission =
+          await Geolocator.checkPermission().timeout(_permissionTimeout);
+      if (permission == LocationPermission.denied) {
+        permission =
+            await Geolocator.requestPermission().timeout(_permissionTimeout);
+      }
+      if (permission == LocationPermission.denied) {
+        return CrowdStartResult.denied;
+      }
+      if (permission == LocationPermission.deniedForever) {
+        return CrowdStartResult.deniedForever;
+      }
 
-    state = state.copyWith(
-      active: true,
-      mode: mode,
-      pings: 0,
-      clearAutoOff: true,
-    );
+      _trainNumber = trainNumber;
+      _date = date;
+      _anonId = _rotatingAnonId(); // fresh per session — not tied to identity
+      _lastPosition = null;
+      _stationaryPings = 0;
+      _hadMovement = false;
 
-    await _tick(); // send one immediately
-    _timer = Timer.periodic(_interval, (_) => _tick());
-    return CrowdStartResult.started;
+      state = state.copyWith(
+        active: true,
+        mode: mode,
+        pings: 0,
+        clearAutoOff: true,
+      );
+
+      // Send one ping immediately so the user gets real confirmation that
+      // sharing works — but bounded, and we roll back on failure.
+      final firstPing = await _tick();
+      if (!firstPing) {
+        _cancelTimer();
+        state = state.copyWith(active: false);
+        return CrowdStartResult.timedOut;
+      }
+
+      _timer = Timer.periodic(_interval, (_) => _tick());
+      return CrowdStartResult.started;
+    } on TimeoutException catch (e) {
+      debugPrint('[Crowd] start timed out: $e');
+      _cancelTimer();
+      state = state.copyWith(active: false);
+      return CrowdStartResult.timedOut;
+    } catch (e) {
+      debugPrint('[Crowd] start failed: $e');
+      _cancelTimer();
+      state = state.copyWith(active: false);
+      return CrowdStartResult.failed;
+    }
   }
 
   /// Manual stop (user toggles off).
@@ -131,18 +185,27 @@ class CrowdSharingController extends Notifier<CrowdSharingState> {
 
   void acknowledgeAutoOff() => state = state.copyWith(clearAutoOff: true);
 
-  Future<void> _tick() async {
-    if (!state.active) return;
+  /// One location ping. Returns true when a fix was obtained (submission
+  /// failures don't fail the ping — see [_submit]).
+  ///
+  /// Bounded by [_positionTimeout]: `getCurrentPosition` has no implicit
+  /// timeout and will otherwise wait forever without a fix.
+  Future<bool> _tick() async {
+    if (!state.active) return false;
     try {
       final settings = LocationSettings(
         accuracy: state.mode == CrowdMode.gps
             ? LocationAccuracy.high
             : LocationAccuracy.low, // cell-tower / network provider equivalent
+        timeLimit: _positionTimeout,
       );
-      final pos = await Geolocator.getCurrentPosition(locationSettings: settings);
+      // Belt and braces: `timeLimit` isn't honoured by every platform
+      // implementation, so wrap the future too.
+      final pos = await Geolocator.getCurrentPosition(locationSettings: settings)
+          .timeout(_positionTimeout);
 
       _detectDivergence(pos);
-      if (!state.active) return; // auto-off may have fired
+      if (!state.active) return false; // auto-off may have fired
 
       await _submit(pos);
 
@@ -153,27 +216,48 @@ class CrowdSharingController extends Notifier<CrowdSharingState> {
             ? (pos.speed.isFinite ? pos.speed * 3.6 : 0)
             : null,
       );
-    } catch (_) {
-      // Skip this ping; try again next interval.
+      return true;
+    } on TimeoutException {
+      debugPrint('[Crowd] no location fix within $_positionTimeout');
+      return false;
+    } catch (e) {
+      debugPrint('[Crowd] ping failed: $e');
+      return false;
     }
   }
 
+  /// Best-effort upload. A failure here does NOT abort the session — the fix
+  /// was still valid — but it is logged rather than silently swallowed, so a
+  /// missing `submit-position` function or absent table is diagnosable.
   Future<void> _submit(Position pos) async {
-    if (!SupabaseConfig.isConfigured) return; // mock mode: no network
+    if (!SupabaseConfig.isConfigured) {
+      debugPrint('[Crowd] Supabase not configured — ping not uploaded');
+      return;
+    }
     try {
-      await Supabase.instance.client.functions.invoke(
-        'submit-position',
-        body: {
-          'train_number': _trainNumber,
-          'journey_date': _date,
-          'lat': pos.latitude,
-          'lng': pos.longitude,
-          'accuracy': pos.accuracy,
-          'source': state.mode == CrowdMode.gps ? 'gps' : 'cell',
-          'anon_id': _anonId,
-        },
-      );
-    } catch (_) {}
+      await Supabase.instance.client.functions
+          .invoke(
+            'submit-position',
+            body: {
+              'train_number': _trainNumber,
+              'journey_date': _date,
+              'lat': pos.latitude,
+              'lng': pos.longitude,
+              'accuracy': pos.accuracy,
+              'source': state.mode == CrowdMode.gps ? 'gps' : 'cell',
+              'anon_id': _anonId,
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      debugPrint('[Crowd] submit-position timed out');
+    } on FunctionException catch (e) {
+      // e.g. 404 when the function isn't deployed, or a DB error inside it.
+      debugPrint('[Crowd] submit-position failed: status=${e.status} '
+          'details=${e.details}');
+    } catch (e) {
+      debugPrint('[Crowd] submit-position error: $e');
+    }
   }
 
   /// Heuristic: if the rider was moving and then stays essentially still for

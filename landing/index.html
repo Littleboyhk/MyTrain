@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Train — Know exactly where your train is</title>
+  <meta name="description" content="My Train blends official running status with anonymous, crowd-sourced GPS from fellow passengers, so you see a live train position even when the official feed goes quiet. Plus instant PNR status. Coming soon to iOS & Android." />
+  <meta name="theme-color" content="#0B0C0F" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="My Train — Live train tracking, powered by every passenger" />
+  <meta property="og:description" content="Real-time train tracking with crowd-verified GPS and instant PNR status. A privacy-first app for Indian Railways travelers." />
+  <meta property="og:type" content="website" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Background: dark base + blurred gradient orbs for color refraction -->
+  <div class="backdrop" aria-hidden="true">
+    <div class="orb orb--indigo" data-parallax="0.10"></div>
+    <div class="orb orb--violet" data-parallax="0.16"></div>
+    <div class="orb orb--cyan" data-parallax="0.06"></div>
+    <div class="grain"></div>
+  </div>
+
+  <!-- Sticky, blur-on-scroll nav -->
+  <header class="nav" id="nav">
+    <div class="container nav__inner">
+      <a class="brand" href="#top" aria-label="My Train home">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="3" width="14" height="14" rx="4" />
+            <path d="M5 11h14" />
+            <circle cx="8.5" cy="14" r="1.1" fill="currentColor" stroke="none" />
+            <circle cx="15.5" cy="14" r="1.1" fill="currentColor" stroke="none" />
+            <path d="M8 17l-2 3M16 17l2 3" />
+          </svg>
+        </span>
+        <span class="brand__name">My Train</span>
+      </a>
+
+      <nav class="nav__links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#pnr">PNR</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
+      <a href="#waitlist" class="btn btn--primary nav__cta">Get early access</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero container">
+      <div class="hero__copy reveal">
+        <span class="eyebrow">
+          <span class="eyebrow__dot" aria-hidden="true"></span>
+          Live train tracking
+        </span>
+        <h1 class="hero__title">Know exactly where<br />your train is.</h1>
+        <p class="hero__sub">
+          My Train blends official running status with anonymous, crowd-sourced GPS
+          from fellow passengers, so you see a live position even when the official
+          feed goes quiet.
+        </p>
+        <div class="hero__actions">
+          <a href="#waitlist" class="btn btn--primary btn--lg">Get early access</a>
+          <a href="#how" class="btn btn--ghost btn--lg">See how it works</a>
+        </div>
+        <div class="hero__meta">
+          <span class="store-chip">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M16.5 3c.1 1-.3 2-1 2.8-.7.8-1.7 1.4-2.7 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.7-1.4zM19 17c-.5 1.1-.7 1.6-1.3 2.6-.9 1.4-2.1 3.1-3.6 3.1-1.3 0-1.7-.8-3.4-.8-1.8 0-2.2.8-3.5.8-1.5 0-2.6-1.5-3.5-2.9C1.4 18 1 14 2.6 11.6c.9-1.4 2.3-2.2 3.7-2.2 1.4 0 2.3.8 3.4.8 1.1 0 1.8-.8 3.4-.8 1.2 0 2.5.7 3.4 1.8-3 1.6-2.5 5.9.5 5.8z"/></svg>
+            Coming to iOS
+          </span>
+          <span class="store-chip">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3.6 2.2 13 11.6l-2.6 2.6L3.1 3.4a1 1 0 0 1 .5-1.2zM14.4 13l2.6 2.6-9 5.2a1 1 0 0 1-1.4-.4L14.4 13zM18 10.4l2.7 1.6a1 1 0 0 1 0 1.7L18 15.3 15.4 12.8 18 10.4zM4.6 21.6 12 14.2l2.1 2.1-8.1 4.7a1 1 0 0 1-1.4.6z"/></svg>
+            & Android
+          </span>
+        </div>
+      </div>
+
+      <!-- Hero phone mockup (glass frame) -->
+      <div class="hero__device reveal" data-tilt>
+        <div class="phone glass glass--rim">
+          <div class="phone__notch" aria-hidden="true"></div>
+          <div class="phone__screen">
+            <div class="app">
+              <div class="app__topbar">
+                <span class="app__back" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+                </span>
+                <span class="live-badge"><span class="live-badge__pulse" aria-hidden="true"></span>LIVE</span>
+              </div>
+
+              <div class="app__train">
+                <span class="app__num">12951</span>
+                <span class="app__type">RAJDHANI</span>
+              </div>
+              <h3 class="app__name">Mumbai Rajdhani Express</h3>
+
+              <div class="app__route glass glass--rim">
+                <div class="route__end">
+                  <span class="route__time">17:00</span>
+                  <span class="route__code">BCT</span>
+                </div>
+                <div class="route__mid">
+                  <span class="chip chip--ontime">On time</span>
+                  <div class="route__line"><span class="route__train" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="4" width="12" height="12" rx="3"/><path d="M6 11h12M9 19l-2 2M15 19l2 2"/></svg>
+                  </span></div>
+                  <span class="route__src">Crowd-verified</span>
+                </div>
+                <div class="route__end route__end--right">
+                  <span class="route__time">08:35<sup>+1</sup></span>
+                  <span class="route__code">NDLS</span>
+                </div>
+              </div>
+
+              <div class="app__stations">
+                <div class="stop stop--done"><span class="stop__dot" aria-hidden="true"></span><span class="stop__name">Vadodara Jn</span><span class="stop__time">20:23</span></div>
+                <div class="stop stop--done"><span class="stop__dot" aria-hidden="true"></span><span class="stop__name">Ratlam Jn</span><span class="stop__time">23:40</span></div>
+                <div class="stop stop--now"><span class="stop__dot" aria-hidden="true"></span><span class="stop__name">Kota Jn</span><span class="stop__time">now</span></div>
+                <div class="stop"><span class="stop__dot" aria-hidden="true"></span><span class="stop__name">Sawai Madhopur</span><span class="stop__time">03:02</span></div>
+                <div class="stop"><span class="stop__dot" aria-hidden="true"></span><span class="stop__name">New Delhi</span><span class="stop__time">08:35</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="device__glow" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="container stats reveal">
+      <div class="stat glass glass--rim glass--interactive">
+        <span class="stat__num">8,989</span>
+        <span class="stat__label">Railway stations covered</span>
+      </div>
+      <div class="stat glass glass--rim glass--interactive">
+        <span class="stat__num">2-layer</span>
+        <span class="stat__label">Official + crowd-verified data</span>
+      </div>
+      <div class="stat glass glass--rim glass--interactive">
+        <span class="stat__num">Privacy-first</span>
+        <span class="stat__label">Anonymous, opt-in, auto-deleted</span>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="section container" id="features">
+      <header class="section__head reveal">
+        <span class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>Features</span>
+        <h2 class="section__title">Everything you need for the platform.</h2>
+        <p class="section__lead">Built for frequent Indian Railways travelers who want accurate live tracking and quick PNR checks, wrapped in a calm, glassy interface.</p>
+      </header>
+
+      <div class="grid grid--features">
+        <article class="card glass glass--rim glass--interactive reveal">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.2-7-11a7 7 0 0 1 14 0c0 5.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+          </span>
+          <h3 class="card__title">Real-time tracking</h3>
+          <p class="card__body">An animated station timeline with running status, delay chips, and a live position that updates as the train moves.</p>
+        </article>
+
+        <article class="card glass glass--rim glass--interactive reveal">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
+          </span>
+          <h3 class="card__title">Crowd-verified position</h3>
+          <p class="card__body">Anonymous GPS pings from riders on the same train are combined into a single median position, resistant to outliers, so you get a fix even where official data is stale.</p>
+        </article>
+
+        <article class="card glass glass--rim glass--interactive reveal">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M3 10h18M7 15h4"/></svg>
+          </span>
+          <h3 class="card__title">Instant PNR status</h3>
+          <p class="card__body">Chart status plus a per-passenger breakdown — Confirmed, RAC, or Waitlisted — with a clear booking-to-current comparison.</p>
+        </article>
+
+        <article class="card glass glass--rim glass--interactive reveal">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9.5 12l1.8 1.8L15 10"/></svg>
+          </span>
+          <h3 class="card__title">Privacy-first by design</h3>
+          <p class="card__body">Location sharing is opt-in only, tied to rotating anonymous IDs, auto-stops when you leave the train, and raw pings are deleted after 48 hours.</p>
+        </article>
+
+        <article class="card glass glass--rim glass--interactive reveal">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          </span>
+          <h3 class="card__title">Search your way</h3>
+          <p class="card__body">Find a train by route (origin to destination and date) or jump straight in by train number, with fast type-ahead suggestions.</p>
+        </article>
+
+        <article class="card glass glass--rim glass--interactive reveal">
+          <span class="card__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.3 6.3 0 0 0 10.5 10.5z"/></svg>
+          </span>
+          <h3 class="card__title">Designed for the dark</h3>
+          <p class="card__body">A calm Liquid Glass interface with light and dark modes, smooth motion, and haptics, tuned to stay readable on a moving train.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section container" id="how">
+      <header class="section__head reveal">
+        <span class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>How it works</span>
+        <h2 class="section__title">Two layers of data, one live dot.</h2>
+        <p class="section__lead">The app talks only to our backend, never third-party APIs directly, then fuses two sources into the most accurate position available.</p>
+      </header>
+
+      <div class="grid grid--steps">
+        <article class="step glass glass--rim glass--interactive reveal">
+          <span class="step__num">01</span>
+          <h3 class="card__title">Search &amp; open</h3>
+          <p class="card__body">Pick your train by route or number. We surface its baseline running status, cached and refreshed only for trains people are actually tracking.</p>
+        </article>
+        <article class="step glass glass--rim glass--interactive reveal">
+          <span class="step__num">02</span>
+          <h3 class="card__title">See it live</h3>
+          <p class="card__body">The tracking screen shows the timeline and a position marker labelled <em>Estimated</em> or <em>Crowd-verified</em> depending on how fresh the data is.</p>
+        </article>
+        <article class="step glass glass--rim glass--interactive reveal">
+          <span class="step__num">03</span>
+          <h3 class="card__title">Contribute (optional)</h3>
+          <p class="card__body">On the train? Tap to share your location anonymously. Your pings help everyone else on board, then vanish after 48 hours.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- PNR -->
+    <section class="section container" id="pnr">
+      <div class="split">
+        <div class="split__copy reveal">
+          <span class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>PNR status</span>
+          <h2 class="section__title">Your whole ticket, at a glance.</h2>
+          <p class="section__lead">Enter a 10-digit PNR to see the train, route, chart status, and every passenger's confirmation, colour-coded so you can read it in a second.</p>
+          <ul class="ticks">
+            <li>Chart prepared / not prepared, made obvious</li>
+            <li>Confirmed, RAC and Waitlisted, colour-coded</li>
+            <li>Booking-to-current upgrades highlighted</li>
+          </ul>
+        </div>
+
+        <div class="split__demo reveal">
+          <form class="pnr-form glass glass--rim" id="pnrForm" novalidate>
+            <label class="pnr-form__label" for="pnrInput">Enter PNR</label>
+            <div class="pnr-form__row">
+              <input class="pnr-form__input" id="pnrInput" inputmode="numeric" maxlength="10" placeholder="10-digit PNR" autocomplete="off" />
+              <button class="btn btn--primary" type="submit">Check</button>
+            </div>
+            <p class="pnr-form__hint">Preview only — this is a marketing demo.</p>
+          </form>
+
+          <div class="pnr-result glass glass--rim">
+            <div class="pnr-result__head">
+              <div>
+                <span class="app__num">12259</span>
+                <span class="app__type">DURONTO</span>
+              </div>
+              <span class="chip chip--soft">Chart prepared</span>
+            </div>
+            <div class="pax">
+              <span class="pax__label">Passenger 1</span>
+              <span class="pax__flow"><b>WL 9</b> <span class="pax__arrow">→</span></span>
+              <span class="pill pill--cnf">CNF A1/23</span>
+            </div>
+            <div class="pax">
+              <span class="pax__label">Passenger 2</span>
+              <span class="pax__flow"><b>WL 10</b> <span class="pax__arrow">→</span></span>
+              <span class="pill pill--rac">RAC 3</span>
+            </div>
+            <div class="pax">
+              <span class="pax__label">Passenger 3</span>
+              <span class="pax__flow"><b>WL 11</b> <span class="pax__arrow">→</span></span>
+              <span class="pill pill--wl">WL 4</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WAITLIST -->
+    <section class="section container" id="waitlist">
+      <div class="cta glass glass--rim glass--interactive reveal">
+        <div class="cta__glow" aria-hidden="true"></div>
+        <h2 class="cta__title">Be first on board.</h2>
+        <p class="cta__lead">My Train is in active development. Leave your email and we'll let you know the moment early access opens on iOS and Android.</p>
+        <form class="waitlist-form" id="waitlistForm" novalidate>
+          <input class="waitlist-form__input" id="waitlistEmail" type="email" placeholder="you@example.com" autocomplete="email" required />
+          <button class="btn btn--primary btn--lg" type="submit">Notify me</button>
+        </form>
+        <p class="waitlist-form__note" id="waitlistNote" role="status" aria-live="polite">No spam. One email at launch.</p>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section container" id="faq">
+      <header class="section__head reveal">
+        <span class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>FAQ</span>
+        <h2 class="section__title">Good questions.</h2>
+      </header>
+
+      <div class="faq reveal">
+        <details class="faq__item glass glass--rim">
+          <summary>When is My Train launching?<span class="faq__plus" aria-hidden="true"></span></summary>
+          <p>It's in active development. Join the waitlist above and you'll be notified the moment early access opens.</p>
+        </details>
+        <details class="faq__item glass glass--rim">
+          <summary>Is my location private?<span class="faq__plus" aria-hidden="true"></span></summary>
+          <p>Yes. Sharing is strictly opt-in, uses rotating anonymous IDs that aren't tied to your identity, stops automatically when you leave the train, and raw location pings are deleted after 48 hours.</p>
+        </details>
+        <details class="faq__item glass glass--rim">
+          <summary>Which trains and stations are supported?<span class="faq__plus" aria-hidden="true"></span></summary>
+          <p>The app covers Indian Railways with a catalog of 8,989 stations. Live accuracy improves as more passengers on a given train contribute positions.</p>
+        </details>
+        <details class="faq__item glass glass--rim">
+          <summary>Will it cost anything?<span class="faq__plus" aria-hidden="true"></span></summary>
+          <p>Pricing isn't decided yet. Waitlist members will hear first.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer__inner">
+      <div class="footer__brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="14" rx="4"/><path d="M5 11h14"/><circle cx="8.5" cy="14" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14" r="1.1" fill="currentColor" stroke="none"/><path d="M8 17l-2 3M16 17l2 3"/></svg>
+        </span>
+        <span class="brand__name">My Train</span>
+      </div>
+      <nav class="footer__links" aria-label="Footer">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#pnr">PNR</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <p class="footer__note">Made for Indian Railways travelers. Not affiliated with IRCTC or Indian Railways.</p>
+    </div>
+  </footer>
+
+  <script src="script.js" defer></script>
+</body>
+</html>

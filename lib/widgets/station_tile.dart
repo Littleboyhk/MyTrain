@@ -26,6 +26,7 @@ class StationTile extends StatefulWidget {
     required this.belowStyle,
     required this.isFirst,
     required this.isLast,
+    this.minor = false,
   });
 
   final Station station;
@@ -34,6 +35,10 @@ class StationTile extends StatefulWidget {
   final ConnectorStyle belowStyle;
   final bool isFirst;
   final bool isLast;
+
+  /// A brief 1-minute halt revealed by expanding a gap: rendered with a
+  /// smaller, dimmer marker.
+  final bool minor;
 
   static const double _railWidth = 40;
   static const double _dotCenterY = 26;
@@ -55,14 +60,30 @@ class _StationTileState extends State<StationTile> {
 
   @override
   Widget build(BuildContext context) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildRail(),
-          Expanded(child: _buildContent()),
-        ],
-      ),
+    // A Stack — NOT IntrinsicHeight + Row — so the rail can stretch to the
+    // content's height without anything measuring an intrinsic height.
+    //
+    // The expand/collapse animation changes the content's real height every
+    // frame, and an intrinsic measurement can't see a value mid-flight: while a
+    // tile collapsed, IntrinsicHeight reported the post-animation height (43px)
+    // while AnimatedSize was still at the expanded one, overflowing the row by
+    // exactly the height of the details block (74px). A Stack sizes itself to
+    // its non-positioned child instead, so the rail follows whatever height the
+    // content currently has.
+    return Stack(
+      children: [
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: StationTile._railWidth,
+          child: _buildRail(),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: StationTile._railWidth),
+          child: _buildContent(),
+        ),
+      ],
     );
   }
 
@@ -113,11 +134,16 @@ class _StationTileState extends State<StationTile> {
   }
 
   Widget _buildDot() {
+    // Brief halts get a smaller, dimmer marker so significant stops stay the
+    // visual anchors when a gap is expanded.
+    final double scale = widget.minor ? 0.66 : 1.0;
+    final double dim = widget.minor ? 0.55 : 1.0;
+
     switch (widget.progress) {
       case StationProgress.current:
         return Container(
-          width: 16,
-          height: 16,
+          width: 16 * scale,
+          height: 16 * scale,
           decoration: BoxDecoration(
             color: AppColors.accent,
             shape: BoxShape.circle,
@@ -127,21 +153,24 @@ class _StationTileState extends State<StationTile> {
         );
       case StationProgress.passed:
         return Container(
-          width: 11,
-          height: 11,
+          width: 11 * scale,
+          height: 11 * scale,
           decoration: BoxDecoration(
-            color: AppColors.lineSolid,
+            color: AppColors.lineSolid.withValues(alpha: dim),
             shape: BoxShape.circle,
           ),
         );
       case StationProgress.upcoming:
         return Container(
-          width: 12,
-          height: 12,
+          width: 12 * scale,
+          height: 12 * scale,
           decoration: BoxDecoration(
             color: AppColors.surface,
             shape: BoxShape.circle,
-            border: Border.all(color: AppColors.textMuted, width: 2),
+            border: Border.all(
+              color: AppColors.textMuted.withValues(alpha: dim),
+              width: widget.minor ? 1.5 : 2,
+            ),
           ),
         );
     }
@@ -243,7 +272,17 @@ class _StationTileState extends State<StationTile> {
         style: AppText.label.copyWith(color: AppColors.textMuted, fontSize: 12),
       ),
     ];
-    if (s.isHalt) {
+    if (s.isPassThrough) {
+      // The train physically passes here without stopping — say so, rather
+      // than let it read like a stop.
+      children
+        ..add(_dotSep())
+        ..add(Text(
+          'Passes',
+          style: AppText.label
+              .copyWith(color: AppColors.textMuted, fontSize: 12),
+        ));
+    } else if (s.isHalt) {
       children
         ..add(_dotSep())
         ..add(Text(
@@ -295,7 +334,11 @@ class _StationTileState extends State<StationTile> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Text(
-          mainTime == null ? '--:--' : Fmt.hhmm(mainTime),
+          mainTime != null
+              ? Fmt.hhmm(mainTime)
+              // No published time for a pass-through point: show the reference
+              // app's '---' placeholder rather than a fake clock value.
+              : (s.isPassThrough ? '---' : '--:--'),
           style: AppText.timeNumeral.copyWith(color: timeColor),
         ),
         if (s.hasDelay)
@@ -315,7 +358,7 @@ class _StationTileState extends State<StationTile> {
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
-              'departed',
+              s.isPassThrough ? 'passed' : 'departed',
               style: TextStyle(
                 color: AppColors.textMuted,
                 fontSize: 10.5,
@@ -340,19 +383,41 @@ class _StationTileState extends State<StationTile> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _infoPill(Icons.tram_rounded, 'Platform', s.platform),
-              if (s.scheduledArrival != null)
+              // Pass-through stations get NO platform chip: the train doesn't
+              // stop, so a platform number would be meaningless here.
+              if (s.isPassThrough)
                 _infoPill(
-                  Icons.login_rounded,
-                  'Arrival',
-                  Fmt.hhmm(s.scheduledArrival!),
-                ),
-              if (s.scheduledDeparture != null)
+                  Icons.fast_forward_rounded,
+                  'Passes at',
+                  s.scheduledArrival != null
+                      ? Fmt.hhmm(s.scheduledArrival!)
+                      : (s.scheduledDeparture != null
+                          ? Fmt.hhmm(s.scheduledDeparture!)
+                          : '---'),
+                )
+              else ...[
                 _infoPill(
-                  Icons.logout_rounded,
-                  'Departure',
-                  Fmt.hhmm(s.scheduledDeparture!),
+                  Icons.tram_rounded,
+                  'Platform',
+                  (s.platform.trim().isNotEmpty &&
+                          s.platform != '0' &&
+                          s.platform != '—')
+                      ? 'PF ${s.platform}'
+                      : 'Platform TBA',
                 ),
+                if (s.scheduledArrival != null)
+                  _infoPill(
+                    Icons.login_rounded,
+                    'Arrival',
+                    Fmt.hhmm(s.scheduledArrival!),
+                  ),
+                if (s.scheduledDeparture != null)
+                  _infoPill(
+                    Icons.logout_rounded,
+                    'Departure',
+                    Fmt.hhmm(s.scheduledDeparture!),
+                  ),
+              ],
             ],
           ),
           if (s.note != null) ...[

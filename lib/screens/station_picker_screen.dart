@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/station_repository.dart';
+import '../l10n/app_localizations.dart';
 import '../models/rail_station.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/glass_theme.dart';
 import '../utils/haptics.dart';
+import '../widgets/glass_container.dart';
 import '../widgets/icon_action_button.dart';
+import '../widgets/mesh_background.dart';
 
 /// Full-screen searchable station picker over the ~9,000-station dataset.
-///
-/// Returns the selected [RailStation] via [Navigator.pop]. Shows recent +
-/// popular stations before the user types, then live-filters as they type.
 class StationPickerScreen extends ConsumerStatefulWidget {
   const StationPickerScreen({
     super.key,
@@ -19,10 +19,7 @@ class StationPickerScreen extends ConsumerStatefulWidget {
     this.excludeCode,
   });
 
-  /// e.g. "Select origin" / "Select destination".
   final String title;
-
-  /// A station code to hide from results (so FROM and TO can't be identical).
   final String? excludeCode;
 
   @override
@@ -63,32 +60,39 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
     final repoAsync = ref.watch(stationRepositoryProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(
-              child: repoAsync.when(
-                loading: () => const _PickerLoading(),
-                error: (e, _) => Center(
-                  child: Text(
-                    'Could not load stations',
-                    style: AppText.label,
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          const Positioned.fill(child: MeshBackground()),
+          SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(),
+                Expanded(
+                  child: repoAsync.when(
+                    loading: () => const _PickerLoading(),
+                    error: (e, _) => Center(
+                      child: Text(
+                        'Could not load stations',
+                        style: AppText.label.copyWith(
+                          color: context.glass.textSecondary,
+                        ),
+                      ),
+                    ),
+                    data: (repo) => _buildResults(repo),
                   ),
                 ),
-                data: (repo) => _buildResults(repo),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -100,11 +104,17 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
                 background: false,
                 onTap: () => Navigator.of(context).maybePop(),
               ),
-              const SizedBox(width: 4),
-              Text(widget.title, style: AppText.titleStrong),
+              const SizedBox(width: 6),
+              Text(
+                widget.title,
+                style: AppText.titleStrong.copyWith(
+                  color: context.glass.textPrimary,
+                  fontSize: 20,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           _buildSearchField(),
         ],
       ),
@@ -112,31 +122,33 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
   }
 
   Widget _buildSearchField() {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.lineMuted),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
+    final g = context.glass;
+    return GlassContainer(
+      pill: true,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          Icon(Icons.search_rounded, size: 20, color: AppColors.textSecondary),
+          Icon(Icons.search_rounded, size: 20, color: g.textSecondary),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
               autofocus: true,
-              style: AppText.stationName.copyWith(fontSize: 15),
-              cursorColor: AppColors.accent,
+              style: AppText.stationName.copyWith(
+                fontSize: 15,
+                color: g.textPrimary,
+              ),
+              cursorColor: GlassTheme.accentViolet,
               textCapitalization: TextCapitalization.characters,
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
-                hintText: 'Search city, station or code',
-                hintStyle: AppText.label.copyWith(color: AppColors.textMuted),
-                contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                hintText: L10n.of(context).searchCityStationCode,
+                hintStyle: AppText.label.copyWith(color: g.textMuted),
+                contentPadding: const EdgeInsets.symmetric(vertical: 16),
               ),
             ),
           ),
@@ -148,9 +160,9 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
                 _focusNode.requestFocus();
               },
               child: Padding(
-                padding: const EdgeInsets.all(4),
+                padding: const EdgeInsets.all(6),
                 child: Icon(Icons.close_rounded,
-                    size: 18, color: AppColors.textSecondary),
+                    size: 18, color: g.textSecondary),
               ),
             ),
         ],
@@ -174,10 +186,11 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
       return _EmptyResults(query: trimmed);
     }
 
-    return ListView.builder(
+    return ListView.separated(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       itemCount: results.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, i) => _StationRow(
         station: results[i],
         query: trimmed,
@@ -196,25 +209,32 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
 
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
         if (recent.isNotEmpty) ...[
-          _sectionHeader('RECENT'),
-          for (final s in recent)
+          _sectionHeader(L10n.of(context).sectionRecent),
+          for (final s in recent) ...[
             _StationRow(station: s, query: '', onTap: () => _select(s)),
+            const SizedBox(height: 8),
+          ],
           const SizedBox(height: 8),
         ],
-        _sectionHeader('POPULAR STATIONS'),
-        for (final s in popular)
+        _sectionHeader(L10n.of(context).sectionPopular),
+        for (final s in popular) ...[
           _StationRow(station: s, query: '', onTap: () => _select(s)),
+          const SizedBox(height: 8),
+        ],
       ],
     );
   }
 
   Widget _sectionHeader(String text) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-      child: Text(text, style: AppText.overline),
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+      child: Text(
+        text,
+        style: AppText.overline.copyWith(color: context.glass.textMuted),
+      ),
     );
   }
 }
@@ -232,59 +252,61 @@ class _StationRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        child: Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppColors.surfaceElevated,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.lineMuted),
-              ),
-              child: Text(
-                station.code,
-                maxLines: 1,
-                overflow: TextOverflow.clip,
-                style: const TextStyle(
-                  color: AppColors.accent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.3,
+    final g = context.glass;
+    return GlassContainer(
+      radius: 20,
+      blurSigma: 15,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              // Glass Station Code Badge
+              GlassContainer(
+                radius: 12,
+                blurSigma: 0,
+                strong: true,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                child: Text(
+                  station.code,
+                  style: const TextStyle(
+                    color: GlassTheme.accentViolet,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.3,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _highlightedName(),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Station code · ${station.code}',
-                    style: AppText.label
-                        .copyWith(color: AppColors.textMuted, fontSize: 12),
-                  ),
-                ],
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _highlightedName(context),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Station code · ${station.code}',
+                      style: AppText.label.copyWith(
+                        color: g.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Icon(Icons.north_east_rounded,
-                size: 16, color: AppColors.textMuted),
-          ],
+              Icon(Icons.north_east_rounded, size: 16, color: g.textMuted),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _highlightedName() {
-    final base = AppText.stationName;
+  Widget _highlightedName(BuildContext context) {
+    final g = context.glass;
+    final base = AppText.stationName.copyWith(color: g.textPrimary);
     if (query.isEmpty) {
       return Text(station.name,
           maxLines: 1, overflow: TextOverflow.ellipsis, style: base);
@@ -306,7 +328,7 @@ class _StationRow extends StatelessWidget {
           TextSpan(
             text: station.name.substring(idx, idx + q.length),
             style: base.copyWith(
-              color: AppColors.accent,
+              color: GlassTheme.accentViolet,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -328,7 +350,7 @@ class _PickerLoading extends StatelessWidget {
         height: 26,
         child: CircularProgressIndicator(
           strokeWidth: 2.4,
-          color: AppColors.accent,
+          color: GlassTheme.accentViolet,
         ),
       ),
     );
@@ -342,19 +364,19 @@ class _EmptyResults extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final g = context.glass;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.search_off_rounded,
-                size: 40, color: AppColors.textMuted),
+            Icon(Icons.search_off_rounded, size: 40, color: g.textMuted),
             const SizedBox(height: 14),
             Text(
               'No stations match "$query"',
               textAlign: TextAlign.center,
-              style: AppText.label.copyWith(color: AppColors.textSecondary),
+              style: AppText.label.copyWith(color: g.textSecondary),
             ),
           ],
         ),

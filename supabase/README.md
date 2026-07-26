@@ -83,3 +83,86 @@ proving outlier resistance vs a mean.
 ## Data retention
 `crowd_positions` rows auto-delete after 48h (cron). Only aggregated positions
 and historical delay stats persist.
+
+---
+
+# RailKit integration (real train data)
+
+RailKit is a **Node.js SDK** (`npm install railkit`). This app is Flutter, so it
+can't call the SDK directly — it calls the **`railkit` Edge Function** (Deno),
+which imports `npm:railkit` and holds the key. Same rule as everything else:
+**the client talks only to Supabase; the key never ships to the device.**
+
+Free tier = **50 requests / month** (100 / 10 min burst), SDK-only. So every
+call is **cache-first** in Supabase; only a true cache miss spends a request.
+
+## 1. Schema
+```bash
+supabase db push          # applies supabase/migrations/0002_railkit_cache.sql
+```
+Adds `railkit_cache`, `railkit_usage` (monthly counter), `railkit_api_log`
+(one row per REAL call), and `railkit_increment_usage()`.
+
+## 2. Set the key as a secret (server-side only)
+```bash
+supabase secrets set RAILKIT_API_KEY=<your_free_tier_key>
+```
+
+## 3. Deploy the function
+```bash
+supabase functions deploy railkit
+```
+> First deploy validates that `npm:railkit@3.3.0` loads on Deno. If it errors on
+> a Node built-in, the fallback is a tiny Node serverless proxy that imports the
+> same package — the cache/usage tables and the Flutter client stay unchanged.
+
+## 4. Point the app at Supabase (as in step 5 above)
+When `SUPABASE_URL` / `SUPABASE_ANON_KEY` are set, the app prefers RailKit and
+falls back to the existing RapidAPI/catalog path. Without them it stays on mock
+data. A RailKit **429 (quota) never falls back to mock** — the UI shows a
+"check back later" state.
+
+## Caching (server-side, per method)
+| Method (action) | TTL | Why |
+|---|---|---|
+| `search` (searchTrainBetweenStations) | 8 h | schedules barely change |
+| `train_info` (getTrainInfo) | 24 h | static route/schedule |
+| `pnr` (checkPNRStatus) | 12 min | changes slowly |
+| `track` (trackTrain) | 4 min | genuinely live |
+
+The function hard-stops at 50/month: it serves stale cache if present, else
+returns `429 quota_exceeded`. It also returns `usage:{count,limit,warn}` on
+every response (`warn:true` at 45).
+
+## Careful testing (each real call costs quota — only ~50/month!)
+Do **not** loop or retry. Test 2–3 routes + 1 PNR, then stop.
+```bash
+# Search: Kayankulam -> Bangalore (expect real numbers like 16525/16526)
+curl -s -X POST "https://<PROJECT_REF>.functions.supabase.co/railkit" \
+  -H "Authorization: Bearer <ANON_KEY>" -H "Content-Type: application/json" \
+  -d '{"action":"search","from":"KYJ","to":"SBC"}'
+
+# PNR (use a real/sample 10-digit PNR)
+curl -s -X POST "https://<PROJECT_REF>.functions.supabase.co/railkit" \
+  -H "Authorization: Bearer <ANON_KEY>" -H "Content-Type: application/json" \
+  -d '{"action":"pnr","pnr":"1234567890"}'
+```
+Inspect the RAW response (no debug logging needed — it's cached):
+```sql
+select cache_key, response_json from public.railkit_cache order by cached_at desc;
+```
+Then tighten the field mappings in `lib/data/railkit_mappers.dart` to match the
+real shape (the keys there are best-effort until confirmed).
+
+## Monitor usage vs the 50/month limit
+```sql
+select * from public.railkit_usage order by month desc;                    -- counter
+select month, count(*) from public.railkit_api_log group by month;         -- from log
+select * from public.railkit_api_log order by called_at desc limit 20;     -- recent calls
+```
+
+## Note on live tracking & quota
+`track` has only a 4-min cache, so continuous live tracking would burn the free
+tier fast. Prefer the existing RapidAPI + crowd layer for continuous tracking
+and use RailKit `track` for a manual "refresh" only. Consider Pro tier
+(₹49/month, 5000 req) before any real user traffic.

@@ -6,15 +6,17 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../data/crowd_position_service.dart';
 import '../data/tracking_controller.dart';
 import '../data/train_status_service.dart';
+import '../l10n/app_localizations.dart';
 import '../models/tracking_state.dart';
 import '../models/train_summary.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/glass_theme.dart';
 import '../utils/haptics.dart';
 import '../widgets/bottom_action_bar.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/inside_train_sheet.dart';
 import '../widgets/journey_hero_card.dart';
+import '../widgets/mesh_background.dart';
 import '../widgets/sharing_indicator.dart';
 import '../widgets/skeleton_timeline.dart';
 import '../widgets/station_timeline.dart';
@@ -25,8 +27,6 @@ import '../widgets/train_refresh_indicator.dart';
 class LiveTrackingScreen extends ConsumerStatefulWidget {
   const LiveTrackingScreen({super.key, this.train});
 
-  /// Optional train identity (from search) shown in the header. The live
-  /// journey data itself is still mock until the real API is wired in.
   final TrainSummary? train;
 
   @override
@@ -39,7 +39,15 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   bool _promptShown = false;
   String _sourceLabel = 'Estimated';
 
-  String get _trainNumber => widget.train?.number ?? '12951';
+  /// No hardcoded fallback: without a train we show an unavailable state rather
+  /// than silently tracking some other train (see TrackingController).
+  String get _trainNumber => widget.train?.number ?? '';
+
+  TrackingArgs get _trackingArgs => TrackingArgs(
+        trainNumber: _trainNumber,
+        date: _journeyDate,
+        train: widget.train,
+      );
 
   String get _journeyDate {
     final n = DateTime.now();
@@ -65,8 +73,6 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   @override
   void initState() {
     super.initState();
-    // Non-blocking "Are you on this train?" prompt shortly after opening,
-    // once per screen. (In production, gate this on the train being in transit.)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 1200), () {
         if (!mounted || _promptShown) return;
@@ -80,20 +86,20 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(trackingProvider);
-    final controller = ref.read(trackingProvider.notifier);
+    // Keyed by train number + date, so one train's route can never be shown
+    // under another train's name.
+    final args = _trackingArgs;
+    final state = ref.watch(trackingProvider(args));
+    final controller = ref.read(trackingProvider(args).notifier);
     final topPadding = MediaQuery.paddingOf(context).top;
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
-    // Layer 1 + Layer 2 (null in mock mode). Watching the status stream also
-    // drives the tracked_trains lifecycle (mark active / expire on leave).
     final sharing = ref.watch(crowdSharingProvider);
     ref.watch(trainStatusStreamProvider(_trainKey));
     final verified = ref.watch(crowdVerifiedPositionProvider(_trainKey)).value;
     _sourceLabel =
         (verified != null && verified.isFresh) ? 'Crowd-verified' : 'Estimated';
 
-    // Auto-off notification (e.g. user left the train).
     ref.listen<CrowdSharingState>(crowdSharingProvider, (prev, next) {
       final reason = next.autoOffReason;
       if (reason != null && prev?.autoOffReason != reason) {
@@ -103,9 +109,10 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
     });
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
+          const Positioned.fill(child: MeshBackground()),
           AnimationLimiter(
             child: CustomScrollView(
               physics: const BouncingScrollPhysics(
@@ -131,7 +138,6 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                 onShare: _onShare,
               ),
             ),
-          // Persistent, unmissable location-sharing indicator.
           if (sharing.active)
             Positioned(
               top: topPadding + 62,
@@ -171,7 +177,8 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       trainName: train?.name ?? journey?.trainName ?? 'Fetching live status…',
       originName: train?.fromName ?? journey?.origin.name ?? '',
       destinationName: train?.toName ?? journey?.destination.name ?? '',
-      live: state is TrackingReady,
+      // LIVE only when a real running-status fix exists; otherwise OFFLINE.
+      live: state is TrackingReady && state.live,
       days: _days,
       selectedDay: _selectedDay,
       onSelectDay: (i) => setState(() => _selectedDay = i),
@@ -179,7 +186,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       onAlarm: () => _onAlarm(state),
       onCoach: _onCoach,
       onShare: _onShare,
-      onToggleSignal: controller.toggleSignalForDemo,
+      onToggleSignal: controller.reacquire,
     );
   }
 
@@ -192,6 +199,66 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       case TrackingLoading():
         return const [
           SliverToBoxAdapter(child: SkeletonTimeline()),
+        ];
+
+      // DATA INTEGRITY: no trustworthy route for this train, so we show an
+      // honest message instead of substituting another train's timeline.
+      case TrackingUnavailable(:final message, :final reason):
+        assert(() {
+          debugPrint('[Tracking] unavailable: $reason');
+          return true;
+        }());
+        return [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(28, 40, 28, 120),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.route_rounded,
+                      size: 46, color: context.glass.textMuted),
+                  const SizedBox(height: 18),
+                  Text(
+                    L10n.of(context).routeUnavailableTitle,
+                    textAlign: TextAlign.center,
+                    style: AppText.titleStrong.copyWith(fontSize: 19),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: AppText.label.copyWith(
+                      color: context.glass.textSecondary,
+                      height: 1.45,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: controller.reacquire,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: GlassTheme.accent,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        L10n.of(context).tryAgain,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ];
 
       case TrackingNoSignal(:final since):
@@ -250,74 +317,98 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   }
 
   Widget _sectionLabel(TrackingReady state) {
+    final stations = state.journey.stations;
+    final passThrough = stations.where((s) => s.isPassThrough).length;
+    // With RailRadar's route the list also contains pass-through points, so
+    // count the actual STOPS and mention the passed stations separately —
+    // "166 STATIONS" would misrepresent a 47-stop train.
+    final label = passThrough > 0
+        ? '${stations.length - passThrough} STOPS · $passThrough PASSED'
+        : '${stations.length} STATIONS';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 14, 22, 6),
-      child: Row(
-        children: [
-          Text('STATIONS', style: AppText.overline),
-          const Spacer(),
-          Text(
-            '${state.stations.length} stops',
-            style: AppText.label.copyWith(
-              color: AppColors.textMuted,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+      child: Text('LIVE TIMELINE · $label', style: AppText.overline),
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Actions
-  // ---------------------------------------------------------------------------
   void _onAlarm(TrackingState state) {
-    Haptics.confirm();
-    final target = state is TrackingReady ? state.currentStation.name : null;
-    _toast(
-      Icons.notifications_active_rounded,
-      target == null
-          ? 'Arrival alarm set'
-          : 'Arrival alarm set for $target',
+    Haptics.tap();
+    if (state is! TrackingReady) return;
+    _showSheet(
+      context,
+      title: L10n.of(context).destinationAlarm,
+      body: 'Get a wake-up vibration 10 minutes before reaching ${state.journey.destination.name}.',
+      action: L10n.of(context).setAlarm,
+      onAction: () => _toast(Icons.alarm_on_rounded, 'Alarm set for 10 min before destination'),
     );
   }
 
   void _onCoach() {
     Haptics.tap();
-    _toast(Icons.event_seat_rounded, 'Coach position — opening layout');
+    _showSheet(
+      context,
+      title: L10n.of(context).coachPosition,
+      body: 'Standard rake order: Engine → SLR → GS → S1–S8 → B1–B4 → A1 → GS → SLR',
+      action: L10n.of(context).gotIt,
+      onAction: () {},
+    );
   }
 
   void _onShare() {
-    Haptics.tap();
-    _toast(Icons.ios_share_rounded, 'Live status link copied to clipboard');
+    Haptics.confirm();
+    ref.read(crowdSharingProvider.notifier).start(
+          trainNumber: _trainNumber,
+          date: _journeyDate,
+          mode: CrowdMode.gps,
+        );
+    _toast(Icons.sensors_rounded, 'Sharing location with fellow passengers');
   }
 
-  void _toast(IconData icon, String message) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.surfaceElevated,
-        elevation: 0,
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: AppColors.lineMuted),
+  void _showSheet(
+    BuildContext context, {
+    required String title,
+    required String body,
+    required String action,
+    required VoidCallback onAction,
+  }) {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: Text(title),
+        message: Text(body),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              onAction();
+            },
+            child: Text(action),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Close'),
         ),
-        duration: const Duration(milliseconds: 1800),
+      ),
+    );
+  }
+
+  void _toast(IconData icon, String msg) {
+    final scaffold = ScaffoldMessenger.maybeOf(context);
+    scaffold?.hideCurrentSnackBar();
+    scaffold?.showSnackBar(
+      SnackBar(
         content: Row(
           children: [
-            Icon(icon, size: 18, color: AppColors.accent),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: AppText.label.copyWith(color: AppColors.textPrimary),
-              ),
-            ),
+            Icon(icon, size: 18, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(child: Text(msg)),
           ],
         ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 90),
       ),
     );
   }

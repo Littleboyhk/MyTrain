@@ -27,11 +27,34 @@ class TrackingNoSignal extends TrackingState {
   const TrackingNoSignal({required this.journey, required this.since});
 }
 
+/// No trustworthy route could be obtained for this train.
+///
+/// DATA INTEGRITY: we render this instead of substituting another train's
+/// route or any hardcoded/sample timeline. Showing a factually wrong route is
+/// worse than showing nothing. [reason] is developer-facing detail; [message]
+/// is what the user sees.
+class TrackingUnavailable extends TrackingState {
+  final String message;
+  final String reason;
+
+  const TrackingUnavailable({required this.message, required this.reason});
+}
+
 class TrackingReady extends TrackingState {
   final Journey journey;
   final LivePosition position;
 
-  const TrackingReady({required this.journey, required this.position});
+  /// True only when a REAL live running-status fix was returned for this train
+  /// and date. False means the route/timeline is genuine but no live position is
+  /// available (e.g. the train isn't running today) — the screen still shows the
+  /// real route, and the badge reads OFFLINE rather than pretending to be live.
+  final bool live;
+
+  const TrackingReady({
+    required this.journey,
+    required this.position,
+    this.live = false,
+  });
 
   /// Assumed cruising speed, used to turn remaining distance into an ETA.
   static const double avgSpeedKmh = 78;

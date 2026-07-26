@@ -1,19 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:flutter_localizations/flutter_localizations.dart';
+
 import 'config/supabase_config.dart';
+import 'data/language_controller.dart';
 import 'data/theme_controller.dart';
+import 'l10n/app_localizations.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
+import 'widgets/aurora_background.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Only connect when configured (see SupabaseConfig). Otherwise the app runs
-  // on local mock data so it still works offline / without a backend.
+  // Load .env environment variables safely
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    debugPrint('[dotenv] .env file not found or failed to load: $e');
+  }
+
   if (SupabaseConfig.isConfigured) {
     await Supabase.initialize(
       url: SupabaseConfig.url,
@@ -22,7 +34,22 @@ Future<void> main() async {
     );
   }
 
-  runApp(const ProviderScope(child: MyTrainApp()));
+  // Load prefs up-front so language (and future settings) read synchronously.
+  SharedPreferences? prefs;
+  try {
+    prefs = await SharedPreferences.getInstance();
+  } catch (e) {
+    debugPrint('[prefs] SharedPreferences unavailable: $e');
+  }
+
+  runApp(
+    ProviderScope(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
+      ],
+      child: const MyTrainApp(),
+    ),
+  );
 }
 
 class MyTrainApp extends ConsumerWidget {
@@ -31,6 +58,8 @@ class MyTrainApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(themeModeProvider);
+    // Selecting a language in the picker rebuilds the whole app in that locale.
+    final language = ref.watch(languageProvider);
 
     // Resolve the effective brightness (mode + platform for "system").
     final platformBrightness =
@@ -65,7 +94,35 @@ class MyTrainApp extends ConsumerWidget {
       theme: AppTheme.themeFor(AppPalette.light),
       darkTheme: AppTheme.themeFor(AppPalette.dark),
       themeMode: mode,
+      // Localization: the user's saved choice drives the locale. Keys missing
+      // from a translated .arb fall back to English automatically.
+      locale: language.locale,
+      supportedLocales: L10n.supportedLocales,
+      localizationsDelegates: const [
+        L10n.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: const HomeScreen(),
+      builder: (context, child) {
+        // Global animated aurora sits behind every route (scaffolds are
+        // transparent), giving the glass surfaces colour to refract.
+        // NOTE: do NOT wrap `child` in an AnimatedSwitcher/KeyedSubtree here.
+        // `child` contains the app's Navigator (a GlobalObjectKey), so a
+        // cross-fade briefly mounts two copies and Flutter throws
+        // "Duplicate GlobalKey detected in widget tree", truncating the tree
+        // (which showed up as a blank screen). AnimatedTheme already animates
+        // theme/brightness changes smoothly without remounting the Navigator.
+        return AnimatedTheme(
+          data: Theme.of(context),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          child: AuroraBackground(
+            child: child ?? const SizedBox.shrink(),
+          ),
+        );
+      },
     );
   }
 }

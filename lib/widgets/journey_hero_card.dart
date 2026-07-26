@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../models/tracking_state.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/glass_theme.dart';
 import '../theme/motion.dart';
 import '../utils/formatters.dart';
 import 'animated_counter.dart';
 import 'delay_chip.dart';
+import 'glass_surface.dart';
 import 'progress_path_painter.dart';
 
 /// The signature "journey progress" card: current → next station with an
@@ -16,191 +17,195 @@ class JourneyHeroCard extends StatelessWidget {
   const JourneyHeroCard({super.key, required this.state, this.sourceLabel});
 
   final TrackingReady state;
-
-  /// e.g. "Crowd-verified" or "Estimated" — indicates the position source.
   final String? sourceLabel;
-
-  static TextStyle get _unit => TextStyle(
-        fontSize: 15,
-        fontWeight: FontWeight.w700,
-        color: AppColors.textSecondary,
-      );
 
   @override
   Widget build(BuildContext context) {
+    final g = context.glass;
     final from = state.fromStation;
     final next = state.currentStation;
     final progress = state.position.segmentProgress;
     final dest = state.journey.destination;
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.lineMuted, width: 1),
-        boxShadow: AppColors.floatingShadow(),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text('EN ROUTE', style: AppText.overline),
-              if (sourceLabel != null) ...[
-                const SizedBox(width: 8),
-                _sourcePill(sourceLabel!),
+    final TextStyle unitStyle = TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+      color: g.textSecondary,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      child: GlassSurface(
+        radius: 24,
+        blur: 20,
+        strong: true,
+        glow: true,
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'EN ROUTE',
+                  style: AppText.overline.copyWith(color: g.textSecondary),
+                ),
+                if (sourceLabel != null) ...[
+                  const SizedBox(width: 8),
+                  _sourcePill(context, sourceLabel!),
+                ],
+                const Spacer(),
+                DelayChip(
+                  status: state.position.status,
+                  delayMinutes: state.position.delayMinutes,
+                ),
               ],
-              const Spacer(),
-              DelayChip(
-                status: state.position.status,
-                delayMinutes: state.position.delayMinutes,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _endpoint(
-                  label: 'DEPARTED',
-                  code: from.code,
-                  name: from.name,
-                  time: from.scheduledDeparture,
-                  alignEnd: false,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _endpoint(
-                  label: 'NEXT STOP',
-                  code: next.code,
-                  name: next.name,
-                  time: next.scheduledArrival,
-                  alignEnd: true,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          // Animated curved progress line with the gliding train badge.
-          SizedBox(
-            height: 76,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final size = Size(constraints.maxWidth, 76);
-                return TweenAnimationBuilder<double>(
-                  // Re-key per segment so a new leg glides in from the start
-                  // instead of animating backwards when progress resets.
-                  key: ValueKey(state.position.fromIndex),
-                  tween: Tween<double>(begin: 0, end: progress),
-                  duration: Motion.trainGlide,
-                  curve: Motion.glide,
-                  builder: (context, p, _) {
-                    final sample = TrainTrackPath.sample(size, p);
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Positioned.fill(
-                          child: CustomPaint(
-                            painter: ProgressPathPainter(progress: p),
-                          ),
-                        ),
-                        Positioned(
-                          left: sample.position.dx - 18,
-                          top: sample.position.dy - 18,
-                          child: const _TrainBadge(),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
             ),
-          ),
-          const SizedBox(height: 14),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: _metric(
-                    value: Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        AnimatedCounter(
-                          value: state.distanceToNextKm,
-                          decimals: 1,
-                          style: AppText.bigNumeral,
-                        ),
-                        const SizedBox(width: 4),
-                        Text('km', style: _unit),
-                      ],
-                    ),
-                    caption: 'to ${next.code}',
+                  child: _endpoint(
+                    context,
+                    label: 'DEPARTED',
+                    code: from.code,
+                    name: from.name,
+                    time: from.scheduledDeparture,
+                    alignEnd: false,
                   ),
                 ),
-                _divider(),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: _metric(
-                    value: Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        AnimatedCounter(
-                          value: state.etaNextMinutes.toDouble(),
-                          decimals: 0,
-                          style: AppText.bigNumeral,
-                        ),
-                        const SizedBox(width: 4),
-                        Text('min', style: _unit),
-                      ],
-                    ),
-                    caption: 'arriving ${Fmt.hhmm(state.etaNextClock)}',
+                  child: _endpoint(
+                    context,
+                    label: 'NEXT STOP',
+                    code: next.code,
+                    name: next.name,
+                    time: next.scheduledArrival,
+                    alignEnd: true,
                   ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 14),
-          Container(height: 1, color: AppColors.lineMuted),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Icon(
-                Icons.my_location_rounded,
-                size: 13,
-                color: AppColors.textMuted,
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 76,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final size = Size(constraints.maxWidth, 76);
+                  return TweenAnimationBuilder<double>(
+                    key: ValueKey(state.position.fromIndex),
+                    tween: Tween<double>(begin: 0, end: progress),
+                    duration: Motion.trainGlide,
+                    curve: Motion.glide,
+                    builder: (context, p, _) {
+                      final sample = TrainTrackPath.sample(size, p);
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Positioned.fill(
+                            child: CustomPaint(
+                              painter: ProgressPathPainter(progress: p),
+                            ),
+                          ),
+                          Positioned(
+                            left: sample.position.dx - 18,
+                            top: sample.position.dy - 18,
+                            child: const _TrainBadge(),
+                          ),
+                        ],
+                      );
+                    },
+                  );
+                },
               ),
-              const SizedBox(width: 6),
-              Text(
-                'Updated ${Fmt.relativeSince(state.position.updatedAt)}',
-                style: AppText.label.copyWith(
-                  color: AppColors.textMuted,
-                  fontSize: 12,
+            ),
+            const SizedBox(height: 14),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: _metric(
+                      value: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          AnimatedCounter(
+                            value: state.distanceToNextKm,
+                            decimals: 1,
+                            style: AppText.bigNumeral.copyWith(color: g.textPrimary),
+                          ),
+                          const SizedBox(width: 4),
+                          Text('km', style: unitStyle),
+                        ],
+                      ),
+                      caption: 'Distance to ${next.code}',
+                      context: context,
+                    ),
+                  ),
+                  VerticalDivider(
+                    color: g.border.withValues(alpha: 0.2),
+                    width: 24,
+                    indent: 2,
+                    endIndent: 2,
+                  ),
+                  Expanded(
+                    child: _metric(
+                      value: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          AnimatedCounter(
+                            value: state.etaNextMinutes.toDouble(),
+                            decimals: 0,
+                            style: AppText.bigNumeral.copyWith(color: g.textPrimary),
+                          ),
+                          const SizedBox(width: 4),
+                          Text('min', style: unitStyle),
+                        ],
+                      ),
+                      caption: 'Estimated travel time',
+                      context: context,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(Icons.access_time_rounded, size: 14, color: g.textSecondary),
+                const SizedBox(width: 6),
+                Text(
+                  'Updated ${Fmt.relativeSince(state.position.updatedAt)}',
+                  style: AppText.label.copyWith(
+                    color: g.textSecondary,
+                    fontSize: 12,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              Text(
-                '${Fmt.km(state.distanceRemainingKm)} km to ${dest.code}',
-                style: AppText.label.copyWith(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
+                const Spacer(),
+                Text(
+                  '${Fmt.km(state.distanceRemainingKm)} km to ${dest.code}',
+                  style: AppText.label.copyWith(
+                    color: g.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _sourcePill(String label) {
+  Widget _sourcePill(BuildContext context, String label) {
+    final g = context.glass;
     final crowd = label.toLowerCase().contains('crowd');
-    final color = crowd ? AppColors.onTime : AppColors.textMuted;
+    final color = crowd ? g.statusGreen : g.textSecondary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -222,26 +227,31 @@ class JourneyHeroCard extends StatelessWidget {
     );
   }
 
-  Widget _endpoint({
+  Widget _endpoint(
+    BuildContext context, {
     required String label,
     required String code,
     required String name,
     required DateTime? time,
     required bool alignEnd,
   }) {
+    final g = context.glass;
     final cross = alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final align = alignEnd ? TextAlign.right : TextAlign.left;
     return Column(
       crossAxisAlignment: cross,
       children: [
-        Text(label, style: AppText.overline.copyWith(fontSize: 9.5)),
+        Text(
+          label,
+          style: AppText.overline.copyWith(fontSize: 9.5, color: g.textSecondary),
+        ),
         const SizedBox(height: 5),
         Text(
           name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: align,
-          style: AppText.stationName,
+          style: AppText.stationName.copyWith(color: g.textPrimary),
         ),
         const SizedBox(height: 2),
         Text(
@@ -249,13 +259,22 @@ class JourneyHeroCard extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: align,
-          style: AppText.label.copyWith(color: AppColors.textMuted, fontSize: 12),
+          style: AppText.label.copyWith(
+            color: g.textSecondary,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ],
     );
   }
 
-  Widget _metric({required Widget value, required String caption}) {
+  Widget _metric({
+    required Widget value,
+    required String caption,
+    required BuildContext context,
+  }) {
+    final g = context.glass;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -264,22 +283,13 @@ class JourneyHeroCard extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           caption,
-          style: AppText.label.copyWith(color: AppColors.textSecondary, fontSize: 12.5),
+          style: AppText.label.copyWith(color: g.textSecondary, fontSize: 12.5),
         ),
       ],
     );
   }
-
-  Widget _divider() {
-    return Container(
-      width: 1,
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      color: AppColors.lineMuted,
-    );
-  }
 }
 
-/// The little indigo puck with a train glyph that rides the progress line.
 class _TrainBadge extends StatelessWidget {
   const _TrainBadge();
 
@@ -289,15 +299,20 @@ class _TrainBadge extends StatelessWidget {
       width: 36,
       height: 36,
       decoration: BoxDecoration(
-        gradient: AppColors.accentGradient,
+        color: Colors.white,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white.withValues(alpha: 0.14), width: 1),
-        boxShadow: AppColors.glow(AppColors.accent, opacity: 0.55, blur: 16, spread: 0),
+        boxShadow: [
+          BoxShadow(
+            color: GlassTheme.accentIndigo.withValues(alpha: 0.4),
+            blurRadius: 12,
+            spreadRadius: 1,
+          ),
+        ],
       ),
       child: const Icon(
-        Icons.train_rounded,
-        size: 19,
-        color: Colors.white,
+        Icons.directions_transit_rounded,
+        size: 20,
+        color: GlassTheme.accentIndigo,
       ),
     );
   }

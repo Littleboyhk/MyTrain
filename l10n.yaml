@@ -1,0 +1,13 @@
+# Codegen config for Flutter's gen-l10n.
+#
+# English (app_en.arb) is the SINGLE SOURCE OF TRUTH. Any key missing from a
+# translated .arb automatically falls back to English at runtime, so partial
+# translations are safe to ship and can be filled in incrementally.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: L10n
+nullable-getter: false
+
+# Writes any keys still missing per-locale so the remaining work is visible.
+untranslated-messages-file: l10n_missing.txt

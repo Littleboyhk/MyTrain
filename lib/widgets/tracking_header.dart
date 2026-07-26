@@ -2,15 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/glass_theme.dart';
 import 'date_pill_selector.dart';
 import 'icon_action_button.dart';
 import 'live_badge.dart';
+import 'train_number_tag.dart';
 
 /// Sticky header that collapses on scroll.
-///
-/// A compact bar (back button, train identity, LIVE badge) stays pinned; the
-/// route summary, quick action icons and the sliding date-pill row live in an
-/// "extras" region that fades and slides away as the user scrolls.
 class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   TrackingHeaderDelegate({
     required this.topPadding,
@@ -44,7 +42,9 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   final VoidCallback onShare;
   final VoidCallback onToggleSignal;
 
-  static const double _compactBar = 58;
+  // 56 not 58: the sliver can hand back a fraction less than minExtent while
+  // pinning, and a fixed 58 overflowed the Column by 1px on web.
+  static const double _compactBar = 56;
   static const double _extras = 118;
 
   @override
@@ -61,16 +61,21 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   ) {
     final range = maxExtent - minExtent;
     final t = range <= 0 ? 0.0 : (shrinkOffset / range).clamp(0.0, 1.0);
+    final g = context.glass;
 
     return Container(
       decoration: BoxDecoration(
-        color: Color.lerp(AppColors.background, AppColors.surface, t),
+        color: Color.lerp(
+          Colors.transparent,
+          g.isDark ? Colors.black.withValues(alpha: 0.9) : Colors.white.withValues(alpha: 0.9),
+          t,
+        ),
         boxShadow: t > 0.02
-            ? AppColors.floatingShadow(opacity: 0.32 * t, blur: 20, y: 8)
+            ? AppColors.floatingShadow(opacity: 0.20 * t, blur: 20, y: 8)
             : null,
         border: Border(
           bottom: BorderSide(
-            color: AppColors.lineMuted.withValues(alpha: t),
+            color: g.border.withValues(alpha: t * 0.15),
             width: t > 0 ? 1 : 0,
           ),
         ),
@@ -78,12 +83,19 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
       padding: EdgeInsets.only(top: topPadding),
       child: Column(
         children: [
-          _buildCompactBar(context),
+          // Loose so it can give back a pixel if the sliver allocates slightly
+          // less than minExtent, instead of overflowing.
+          Flexible(fit: FlexFit.loose, child: _buildCompactBar(context)),
           Expanded(
             child: ClipRect(
-              child: Align(
+              // OverflowBox lets the extras keep their natural height while the
+              // available space shrinks during collapse. With a plain Align the
+              // inner Column got a smaller height than its content and threw
+              // "RenderFlex overflowed by N pixels" on every scroll frame.
+              child: OverflowBox(
                 alignment: Alignment.topCenter,
-                heightFactor: 1,
+                minHeight: 0,
+                maxHeight: _extras,
                 child: Opacity(
                   opacity: (1 - t * 1.5).clamp(0.0, 1.0),
                   child: Transform.translate(
@@ -100,6 +112,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   }
 
   Widget _buildCompactBar(BuildContext context) {
+    final g = context.glass;
     return SizedBox(
       height: _compactBar,
       child: Padding(
@@ -118,16 +131,23 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'TRAIN $trainNumber',
-                    style: AppText.overline.copyWith(fontSize: 10),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    trainName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.titleStrong,
+                  Row(
+                    children: [
+                      if (trainNumber != '—') ...[
+                        // Compact: this bar is height-constrained when pinned.
+                        TrainNumberTag(trainNumber, fontSize: 11),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: Text(
+                          trainName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppText.titleStrong
+                              .copyWith(color: g.textPrimary, fontSize: 14.5),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -153,7 +173,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
             padding: const EdgeInsets.fromLTRB(20, 4, 12, 0),
             child: Row(
               children: [
-                Expanded(child: _routeSummary()),
+                Expanded(child: _routeSummary(context)),
                 IconActionButton(
                   icon: Icons.notifications_none_rounded,
                   onTap: onAlarm,
@@ -188,8 +208,9 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
     );
   }
 
-  Widget _routeSummary() {
+  Widget _routeSummary(BuildContext context) {
     if (originName.isEmpty) return const SizedBox.shrink();
+    final g = context.glass;
     return Row(
       children: [
         Flexible(
@@ -197,7 +218,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
             originName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppText.label.copyWith(color: AppColors.textSecondary),
+            style: AppText.label.copyWith(color: g.textSecondary),
           ),
         ),
         Padding(
@@ -205,7 +226,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
           child: Icon(
             Icons.arrow_right_alt_rounded,
             size: 18,
-            color: AppColors.textMuted,
+            color: g.textMuted,
           ),
         ),
         Flexible(
@@ -213,7 +234,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
             destinationName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppText.label.copyWith(color: AppColors.textPrimary),
+            style: AppText.label.copyWith(color: g.textPrimary),
           ),
         ),
       ],

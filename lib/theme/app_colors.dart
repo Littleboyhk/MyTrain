@@ -58,29 +58,29 @@ class AppPalette {
   bool get isDark => brightness == Brightness.dark;
 
   // ---------------------------------------------------------------------------
-  // Dark (the app's signature look)
+  // Dark (pure black signature look)
   // ---------------------------------------------------------------------------
   static const AppPalette dark = AppPalette(
     brightness: Brightness.dark,
-    background: Color(0xFF0B0C0F),
+    background: Color(0xFF000000),
     surface: Color(0xFF151721),
     surfaceElevated: Color(0xFF1C1F2E),
     surfaceHint: Color(0xFF232636),
-    textPrimary: Color(0xFFF5F6FA),
-    textSecondary: Color(0xFF9BA1B0),
-    textMuted: Color(0xFF5C6273),
+    textPrimary: Color(0xFFFFFFFF),
+    textSecondary: Color(0xCCFFFFFF),
+    textMuted: Color(0x8AFFFFFF),
     lineSolid: Color(0xFF3A3F52),
     lineMuted: Color(0xFF262A38),
     shadowColor: Color(0xFF000000),
     shadowStrength: 1.0,
     shimmerHighlight: Color(0x17FFFFFF),
-    glassFill: Color(0x12FFFFFF), // ~7% — clear glass, lets vibrancy show
-    glassStroke: Color(0x2EFFFFFF), // ~18% white side/bottom edge
-    glassHighlight: Color(0x5CFFFFFF), // ~36% bright top rim + sheen
+    glassFill: Color(0x12FFFFFF),
+    glassStroke: Color(0x2EFFFFFF),
+    glassHighlight: Color(0x5CFFFFFF),
   );
 
   // ---------------------------------------------------------------------------
-  // Light (tuned for contrast — text stays legible on light surfaces)
+  // Light (tuned for high contrast text readability on all glass surfaces)
   // ---------------------------------------------------------------------------
   static const AppPalette light = AppPalette(
     brightness: Brightness.light,
@@ -88,53 +88,46 @@ class AppPalette {
     surface: Color(0xFFFFFFFF),
     surfaceElevated: Color(0xFFFFFFFF),
     surfaceHint: Color(0xFFEDEFF5),
-    textPrimary: Color(0xFF14161F),
-    textSecondary: Color(0xFF525869),
-    textMuted: Color(0xFF8A90A0),
+    textPrimary: Color(0xFF0F172A), // Crisp dark slate for 100% legibility
+    textSecondary: Color(0xFF334155), // Dark slate secondary text
+    textMuted: Color(0xFF475569), // Muted text with strong contrast
     lineSolid: Color(0xFFCBD0DC),
     lineMuted: Color(0xFFE4E7EF),
     shadowColor: Color(0xFF2A3348),
     shadowStrength: 0.28,
     shimmerHighlight: Color(0x80FFFFFF),
-    glassFill: Color(0x59FFFFFF), // ~35% — clearer glass on light content
-    glassStroke: Color(0x1F1B2440), // faint dark bottom edge for definition
-    glassHighlight: Color(0xF2FFFFFF), // near-white bright top rim
+    glassFill: Color(0x3DFFFFFF),
+    glassStroke: Color(0x99FFFFFF),
+    glassHighlight: Color(0xF2FFFFFF),
   );
 }
 
 /// App color tokens.
-///
-/// Brand colors are compile-time constants (same in both themes). The neutral
-/// tokens are getters that read the *active* [AppPalette], so existing call
-/// sites (`AppColors.background`, `AppColors.textPrimary`, …) keep working and
-/// automatically flip when the theme changes.
 class AppColors {
   const AppColors._();
 
-  // ---------------------------------------------------------------------------
-  // Active palette (set once at the top of the widget tree, see main.dart).
-  // ---------------------------------------------------------------------------
   static AppPalette palette = AppPalette.dark;
 
-  // ---------------------------------------------------------------------------
-  // Brand — constant across themes
-  // ---------------------------------------------------------------------------
-  static const Color accent = Color(0xFF5B5FEF);
-  static const Color accentViolet = Color(0xFF8B5FE6);
+  // Static brand colors (identical in light and dark mode).
+  static const Color accent = Color(0xFF8B5CF6);
+  static const Color accentViolet = Color(0xFF8B5CF6);
+  static const Color accentIndigo = Color(0xFF6366F1);
+  static const Color accentBlue = Color(0xFF3B82F6);
 
   static const LinearGradient accentGradient = LinearGradient(
-    colors: [accent, accentViolet],
-    begin: Alignment.centerLeft,
-    end: Alignment.centerRight,
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [accentViolet, accentIndigo],
   );
 
-  static const Color onTime = Color(0xFF22C55E);
-  static const Color delayed = Color(0xFFF59E0B);
-  static const Color cancelled = Color(0xFFEF4444);
+  // Status colors.
+  static const Color onTime = Color(0xFF34C759);
+  static const Color delayed = Color(0xFFFF3B30);
+  static const Color cancelled = Color(0xFFFF3B30);
+  static const Color info = Color(0xFF3B82F6);
 
-  // ---------------------------------------------------------------------------
-  // Neutrals — follow the active palette
-  // ---------------------------------------------------------------------------
+  // Dynamic getters forwarding to active palette.
+  static Brightness get brightness => palette.brightness;
   static Color get background => palette.background;
   static Color get surface => palette.surface;
   static Color get surfaceElevated => palette.surfaceElevated;
@@ -147,39 +140,35 @@ class AppColors {
   static Color get lineSolid => palette.lineSolid;
   static Color get lineMuted => palette.lineMuted;
 
+  static Color get shadowColor => palette.shadowColor;
+  static double get shadowStrength => palette.shadowStrength;
   static Color get shimmerHighlight => palette.shimmerHighlight;
 
-  // Liquid Glass tokens (follow the active palette).
   static Color get glassFill => palette.glassFill;
   static Color get glassStroke => palette.glassStroke;
   static Color get glassHighlight => palette.glassHighlight;
 
-  // ---------------------------------------------------------------------------
-  // Soft, layered shadow for a "floating" feel (adapts to the palette).
-  // ---------------------------------------------------------------------------
   static List<BoxShadow> floatingShadow({
-    double blur = 30,
-    double y = 14,
-    double opacity = 0.38,
-    double spread = -6,
+    double blur = 24,
+    double y = 8,
+    double opacity = 0.24,
+    double spread = 0,
   }) {
     return [
       BoxShadow(
-        color: palette.shadowColor
-            .withValues(alpha: opacity * palette.shadowStrength),
+        color: shadowColor.withValues(alpha: opacity * shadowStrength),
         blurRadius: blur,
-        offset: Offset(0, y),
         spreadRadius: spread,
+        offset: Offset(0, y),
       ),
     ];
   }
 
-  /// A colored glow (brand color passed in — same in both themes).
   static List<BoxShadow> glow(
     Color color, {
-    double opacity = 0.45,
-    double blur = 24,
-    double spread = -2,
+    double opacity = 0.4,
+    double blur = 20,
+    double spread = 0,
   }) {
     return [
       BoxShadow(

@@ -5,6 +5,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
 import '../utils/formatters.dart';
+import 'glass_surface.dart';
 import 'liquid_glass.dart';
 import 'pulse_ring.dart';
 
@@ -74,14 +75,15 @@ class SignalLostState extends StatelessWidget {
           // Searching radar rings.
           const PulseRing(color: AppColors.accent, size: 160),
           // Soft disc.
-          Container(
+          SizedBox(
             width: 92,
             height: 92,
-            decoration: BoxDecoration(
-              color: AppColors.surfaceElevated,
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.lineMuted),
-              boxShadow: AppColors.floatingShadow(blur: 24, y: 8, opacity: 0.4),
+            child: GlassSurface(
+              radius: 46,
+              blur: 0,
+              strong: true,
+              compact: true,
+              child: const SizedBox.expand(),
             ),
           ),
           // Gently floating train.
@@ -101,17 +103,19 @@ class SignalLostState extends StatelessWidget {
           Positioned(
             right: 26,
             top: 34,
-            child: Container(
-              padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.lineMuted),
-              ),
-              child: const Icon(
-                Icons.wifi_tethering_off_rounded,
-                size: 15,
-                color: AppColors.delayed,
+            child: SizedBox(
+              width: 25,
+              height: 25,
+              child: GlassSurface(
+                radius: 999,
+                blur: 0,
+                compact: true,
+                padding: const EdgeInsets.all(5),
+                child: const Icon(
+                  Icons.wifi_tethering_off_rounded,
+                  size: 15,
+                  color: AppColors.delayed,
+                ),
               ),
             ),
           ),

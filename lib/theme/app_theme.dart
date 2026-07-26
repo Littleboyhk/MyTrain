@@ -1,6 +1,8 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
+import 'glass_theme.dart';
 
 /// Builds [ThemeData] for a given [AppPalette].
 ///
@@ -23,13 +25,35 @@ class AppTheme {
     );
 
     return base.copyWith(
-      scaffoldBackgroundColor: p.background,
+      // Transparent so the global AuroraBackground shows through every route.
+      scaffoldBackgroundColor: Colors.transparent,
       colorScheme: colorScheme,
       textTheme: _textTheme(base.textTheme, p),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
       splashFactory: NoSplash.splashFactory,
       splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
       hoverColor: Colors.transparent,
+      // iOS-native page transitions on every platform (slide-in-from-right +
+      // parallax + swipe-to-go-back), so even routes we don't touch inherit it.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: CupertinoPageTransitionsBuilder(),
+        },
+      ),
+      extensions: <ThemeExtension<dynamic>>[
+        p.isDark ? GlassTheme.dark : GlassTheme.light,
+      ],
     );
   }
 

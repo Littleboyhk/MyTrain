@@ -1,0 +1,211 @@
+{
+  "@@locale": "en",
+  "appName": "My Train",
+  "@appName": {
+    "description": "Brand name — intentionally NOT translated in any locale."
+  },
+  "navTrack": "Track",
+  "navPnr": "PNR",
+  "navBook": "Book",
+  "navProfile": "Profile",
+  "heroTitle": "Track your next journey",
+  "heroSubtitle": "Live status, PNR & platform info across India",
+  "nearestStation": "Nearest Station",
+  "usingNearestStation": "Using nearest station",
+  "searchByRoute": "By Route",
+  "searchByTrainNo": "By Train No.",
+  "fieldFrom": "FROM",
+  "fieldTo": "TO",
+  "selectStation": "Select station",
+  "searchTrains": "Search Trains",
+  "hintTrainNumber": "Enter train number (e.g. 12951)",
+  "hintSearchAny": "Search train name, number or station",
+  "searchCityStationCode": "Search city, station or code",
+  "selectOrigin": "Select origin",
+  "selectDestination": "Select destination",
+  "sectionRecent": "RECENT",
+  "sectionPopular": "POPULAR STATIONS",
+  "filterAllTrains": "All Trains",
+  "filterNearby": "Nearby",
+  "filterRunningStatus": "Running Status",
+  "filterPnrStatus": "PNR Status",
+  "filterLiveMap": "Live Map",
+  "filterExpress": "Express",
+  "filterSuperfast": "Superfast",
+  "filterPassenger": "Passenger",
+  "filterOnTime": "On Time",
+  "filterDelayed": "Delayed",
+  "countDepartures": "{count} upcoming departures",
+  "@countDepartures": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "countNearYou": "{count} trains near you",
+  "@countNearYou": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "countRunning": "{count} trains running",
+  "@countRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "countOnRoute": "{count} trains · {from} → {to}",
+  "@countOnRoute": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "from": {},
+      "to": {}
+    }
+  },
+  "countMatching": "{count} matching \"{query}\"",
+  "@countMatching": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "query": {}
+    }
+  },
+  "noTrainsMatch": "No trains match your filters",
+  "statusOnTime": "On time",
+  "statusDelayedMin": "Delayed {minutes}m",
+  "@statusDelayedMin": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "platformAndEta": "PF {platform} · in {minutes} min",
+  "@platformAndEta": {
+    "placeholders": {
+      "platform": {},
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "platformTba": "Platform TBA",
+  "liveGps": "Live GPS",
+  "pantry": "Pantry",
+  "acThreeTier": "AC 3-Tier",
+  "acTwoTier": "AC 2-Tier",
+  "scheduledDays": "Scheduled · {days}",
+  "@scheduledDays": {
+    "placeholders": {
+      "days": {}
+    }
+  },
+  "runsDaily": "Daily",
+  "bookTitle": "Book your tickets",
+  "bookBody": "Reservations are handled on the official IRCTC portal.",
+  "bookCta": "Continue to IRCTC",
+  "bookSheetTitle": "Book on IRCTC",
+  "bookSheetBody": "Ticket booking happens on the official IRCTC portal.",
+  "bookOpening": "Opening IRCTC — integration coming soon",
+  "cancel": "Cancel",
+  "tryAgain": "Try again",
+  "gotIt": "Got it",
+  "pnrHint": "10-digit PNR",
+  "pnrCheckCta": "Check PNR Status",
+  "pnrNotFoundTitle": "PNR not found",
+  "pnrNotFoundBody": "We couldn't find PNR {pnr}. Double-check the 10-digit number on your ticket and try again.",
+  "@pnrNotFoundBody": {
+    "placeholders": {
+      "pnr": {}
+    }
+  },
+  "pnrSampleTip": "Tip: tap a sample above to see a live example.",
+  "pnrSampleConfirmed": "Confirmed",
+  "pnrSampleWaitlisted": "Waitlisted",
+  "pnrSampleMixed": "Mixed",
+  "checkBackLaterTitle": "Check back later",
+  "pnrQuotaBody": "Live PNR lookups are temporarily unavailable because the monthly request limit was reached. Please try again later.",
+  "routeUnavailableTitle": "Route unavailable",
+  "routeUnavailableGeneric": "Couldn't load the route for train {number}.",
+  "@routeUnavailableGeneric": {
+    "placeholders": {
+      "number": {}
+    }
+  },
+  "routeUnavailableNotConnected": "Live route data isn't connected in this build yet.",
+  "routeUnavailableQuota": "Live railway data is temporarily unavailable. Please check back later.",
+  "routeUnavailableInconsistent": "Route data for train {number} looks inconsistent, so it's not being shown.",
+  "@routeUnavailableInconsistent": {
+    "placeholders": {
+      "number": {}
+    }
+  },
+  "liveTimelineStations": "LIVE TIMELINE · {count} STATIONS",
+  "@liveTimelineStations": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "destinationAlarm": "Destination Alarm",
+  "coachPosition": "Coach Position",
+  "setAlarm": "Set Alarm",
+  "unableToFetchRoute": "Unable to fetch route. Please check connection.",
+  "settingsTitle": "Settings",
+  "sectionAppearance": "APPEARANCE",
+  "themeSystem": "System",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "appearanceHint": "Choose how My Train looks. \"System\" follows your device setting automatically.",
+  "sectionLanguage": "LANGUAGE",
+  "language": "Language",
+  "sectionAbout": "ABOUT",
+  "aboutVersion": "Version {version}",
+  "@aboutVersion": {
+    "placeholders": {
+      "version": {}
+    }
+  },
+  "aboutCoverage": "Coverage",
+  "aboutCoverageValue": "{count} railway stations",
+  "@aboutCoverageValue": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "aboutStationData": "Station data",
+  "chooseLanguage": "Choose a language",
+  "chooseLanguageSubtitle": "Pick how you'd like to read My Train.",
+  "submit": "Submit",
+  "languageChanged": "Language set to {language}",
+  "@languageChanged": {
+    "placeholders": {
+      "language": {}
+    }
+  },
+  "platformNumber": "Platform {platform}",
+  "@platformNumber": {
+    "placeholders": {
+      "platform": {}
+    }
+  },
+  "weekdayLetters": "S,M,T,W,Th,F,Sa",
+  "runsUntil": "Runs till {date}",
+  "@weekdayLetters": {
+    "description": "Comma-separated weekday abbreviations, SUNDAY FIRST. Must contain exactly 7 items."
+  },
+  "@runsUntil": {
+    "placeholders": {
+      "date": {}
+    }
+  }
+}

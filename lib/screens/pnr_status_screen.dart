@@ -5,26 +5,37 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 import '../data/pnr_service.dart';
+import '../data/railkit_service.dart';
+import '../l10n/app_localizations.dart';
 import '../models/pnr_status.dart';
 import '../models/train_summary.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/glass_theme.dart';
 import '../theme/motion.dart';
 import '../utils/haptics.dart';
+import '../widgets/glass_surface.dart';
 import '../widgets/icon_action_button.dart';
 import '../widgets/liquid_glass_button.dart';
+import '../widgets/mesh_background.dart';
+import '../widgets/train_number_tag.dart';
 
 /// PNR status: enter a 10-digit PNR, then see the train/route header, chart
 /// status, and a per-passenger booking → current comparison. Backed by the
 /// mock [PnrService]; result cards fade + slide in with a stagger.
 class PnrStatusScreen extends ConsumerStatefulWidget {
-  const PnrStatusScreen({super.key});
+  const PnrStatusScreen({super.key, this.embedded = false});
+
+  /// When shown as a bottom-dock tab (not a pushed route): hide the back
+  /// button, make the scaffold transparent so the home mesh shows through,
+  /// and pad the bottom so content clears the floating dock.
+  final bool embedded;
 
   @override
   ConsumerState<PnrStatusScreen> createState() => _PnrStatusScreenState();
 }
 
-enum _Phase { idle, loading, result, notFound }
+enum _Phase { idle, loading, result, notFound, quota }
 
 class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
   final TextEditingController _controller = TextEditingController();
@@ -66,7 +77,16 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
       _result = null;
     });
 
-    final result = await ref.read(pnrServiceProvider).lookup(pnr);
+    PnrResult? result;
+    try {
+      result = await ref.read(pnrServiceProvider).lookup(pnr);
+    } on RailKitException catch (e) {
+      if (!mounted || _submittedPnr != pnr) return;
+      // Quota is the only RailKit error that escapes lookup(); everything else
+      // falls back internally. Show "check back later", never mock data.
+      setState(() => _phase = e.isQuota ? _Phase.quota : _Phase.notFound);
+      return;
+    }
     if (!mounted || _submittedPnr != pnr) return; // superseded by a newer query
     setState(() {
       _result = result;
@@ -84,18 +104,22 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _header(context),
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          if (!widget.embedded) const Positioned.fill(child: MeshBackground()),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _header(context),
             Expanded(
               child: ListView(
                 keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+                padding:
+                    EdgeInsets.fromLTRB(16, 8, 16, widget.embedded ? 120 : 40),
                 children: [
                   _InputCard(
                     controller: _controller,
@@ -129,6 +153,8 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
           ],
         ),
       ),
+        ],
+      ),
     );
   }
 
@@ -139,6 +165,7 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
         _LoadingCard(pnr: _submittedPnr, key: const ValueKey('loading')),
       _Phase.notFound =>
         _NotFoundState(pnr: _submittedPnr, key: const ValueKey('notfound')),
+      _Phase.quota => const _QuotaState(key: ValueKey('quota')),
       _Phase.result => _PnrResultView(
           result: _result!,
           key: ValueKey('result-${_result!.pnr}'),
@@ -148,16 +175,18 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
 
   Widget _header(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 16, 8),
+      padding: EdgeInsets.fromLTRB(widget.embedded ? 20 : 12, 8, 16, 8),
       child: Row(
         children: [
-          IconActionButton(
-            icon: Icons.arrow_back_ios_new_rounded,
-            iconSize: 18,
-            background: false,
-            onTap: () => Navigator.of(context).maybePop(),
-          ),
-          const SizedBox(width: 4),
+          if (!widget.embedded) ...[
+            IconActionButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              iconSize: 18,
+              background: false,
+              onTap: () => Navigator.of(context).maybePop(),
+            ),
+            const SizedBox(width: 4),
+          ],
           Text('PNR Status', style: AppText.titleStrong.copyWith(fontSize: 20)),
         ],
       ),
@@ -189,14 +218,11 @@ class _InputCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final focused = focusNode.hasFocus;
 
-    return Container(
+    return GlassSurface(
+      radius: 22,
+      strong: true,
+      glow: true,
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppColors.lineMuted),
-        boxShadow: AppColors.floatingShadow(),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -219,15 +245,25 @@ class _InputCard extends StatelessWidget {
             duration: Motion.fast,
             curve: Motion.standard,
             decoration: BoxDecoration(
-              color: AppColors.surface,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: focused ? AppColors.accent : AppColors.lineMuted,
-                width: focused ? 1.5 : 1,
-              ),
+              boxShadow: focused
+                  ? [
+                      BoxShadow(
+                        color: AppColors.accent.withValues(alpha: 0.30),
+                        blurRadius: 20,
+                        spreadRadius: -4,
+                      ),
+                    ]
+                  : const [],
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
+            // Glass-lite well: shared gradient rim instead of a flat border.
+            child: GlassSurface(
+              radius: 16,
+              blur: 0,
+              strong: focused,
+              compact: true,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
               children: [
                 const Icon(Icons.confirmation_number_outlined,
                     size: 20, color: AppColors.accent),
@@ -249,7 +285,7 @@ class _InputCard extends StatelessWidget {
                     cursorColor: AppColors.accent,
                     decoration: InputDecoration(
                       border: InputBorder.none,
-                      hintText: '10-digit PNR',
+                      hintText: L10n.of(context).pnrHint,
                       hintStyle: AppText.label.copyWith(
                         color: AppColors.textMuted,
                         letterSpacing: 0.5,
@@ -267,6 +303,7 @@ class _InputCard extends StatelessWidget {
                         size: 18, color: AppColors.textSecondary),
                   ),
               ],
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -288,7 +325,7 @@ class _InputCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Check PNR Status',
+                  L10n.of(context).pnrCheckCta,
                   style: TextStyle(
                     fontSize: 15.5,
                     fontWeight: FontWeight.w700,
@@ -342,13 +379,12 @@ class _SampleChip extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: Container(
+      child: GlassSurface(
+        radius: 999,
+        blur: 0,
+        pill: true,
+        compact: true,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: AppColors.lineMuted),
-        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -426,40 +462,36 @@ class _HeaderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = result.train;
-    return Container(
+    return GlassSurface(
+      radius: 20,
+      strong: true,
+      glow: true,
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.lineMuted),
-        boxShadow: AppColors.floatingShadow(blur: 22, y: 10, opacity: 0.3),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text(
-                t.number,
-                style: const TextStyle(
-                  color: AppColors.accent,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const SizedBox(width: 10),
               _TypeBadge(type: t.type),
               const Spacer(),
               _pnrChip(),
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            t.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppText.titleStrong.copyWith(fontSize: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              TrainNumberTag(t.number, fontSize: 14),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  t.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.titleStrong.copyWith(fontSize: 16),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 18),
           _routeRow(t),
@@ -470,8 +502,8 @@ class _HeaderCard extends StatelessWidget {
             children: [
               _metaChip(Icons.event_rounded, result.dateLabel),
               const SizedBox(width: 10),
-              _metaChip(
-                  Icons.airline_seat_recline_normal_rounded, result.classLabel),
+              _metaChip(Icons.airline_seat_recline_normal_rounded,
+                  result.classLabel),
             ],
           ),
         ],
@@ -480,13 +512,12 @@ class _HeaderCard extends StatelessWidget {
   }
 
   Widget _pnrChip() {
-    return Container(
+    return GlassSurface(
+      radius: 999,
+      blur: 0,
+      pill: true,
+      compact: true,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppColors.lineMuted),
-      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -633,13 +664,11 @@ class _HeaderCard extends StatelessWidget {
       );
 
   Widget _metaChip(IconData icon, String text) {
-    return Container(
+    return GlassSurface(
+      radius: 10,
+      blur: 0,
+      compact: true,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.lineMuted),
-      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -700,13 +729,10 @@ class _ChartStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = status.color;
-    return Container(
+    return GlassSurface(
+      radius: 18,
+      strong: true,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.lineMuted),
-      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -750,13 +776,12 @@ class _ChartStatusCard extends StatelessWidget {
   }
 
   Widget _pill(Color color) {
-    return Container(
+    return GlassSurface(
+      radius: 999,
+      blur: 0,
+      pill: true,
+      compact: true,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
-      ),
       child: Text(
         status.short,
         style: TextStyle(
@@ -804,13 +829,11 @@ class _PassengerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final g = context.glass;
+    return GlassSurface(
+      radius: 18,
+      strong: true,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.lineMuted),
-      ),
       child: Column(
         children: [
           Row(
@@ -844,7 +867,7 @@ class _PassengerCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          _comparison(),
+          _comparison(g),
         ],
       ),
     );
@@ -871,14 +894,12 @@ class _PassengerCard extends StatelessWidget {
     );
   }
 
-  Widget _comparison() {
-    return Container(
+  Widget _comparison(GlassTheme g) {
+    return GlassSurface(
+      radius: 14,
+      blur: 0,
+      compact: true,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.lineMuted),
-      ),
       child: Row(
         children: [
           Expanded(child: _allocation('BOOKING', passenger.booking, false)),
@@ -990,13 +1011,12 @@ class _StatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = status.color;
-    return Container(
+    return GlassSurface(
+      radius: 999,
+      blur: 0,
+      pill: true,
+      compact: true,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
-      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1144,7 +1164,7 @@ class _NotFoundState extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           Text(
-            'PNR not found',
+            L10n.of(context).pnrNotFoundTitle,
             textAlign: TextAlign.center,
             style: AppText.titleStrong.copyWith(fontSize: 20),
           ),
@@ -1174,6 +1194,46 @@ class _NotFoundState extends StatelessWidget {
   }
 }
 
+/// Shown when RailKit's monthly/burst request budget is reached (429). We do
+/// NOT fall back to sample data here — the user should know it's temporary.
+class _QuotaState extends StatelessWidget {
+  const _QuotaState({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final g = context.glass;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
+      child: Column(
+        children: [
+          _GlassDisc(
+            icon: Icons.hourglass_bottom_rounded,
+            color: g.statusPurple,
+            float: true,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            L10n.of(context).checkBackLaterTitle,
+            textAlign: TextAlign.center,
+            style: AppText.titleStrong.copyWith(fontSize: 20),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Live PNR lookups are temporarily unavailable because the monthly '
+            'request limit was reached. Please try again later.',
+            textAlign: TextAlign.center,
+            style: AppText.label.copyWith(
+              color: AppColors.textSecondary,
+              height: 1.45,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Soft glassy disc holding an icon, used by the idle / loading / not-found
 /// states. Optionally pulses (loading) or gently floats (empty states).
 class _GlassDisc extends StatelessWidget {
@@ -1191,16 +1251,15 @@ class _GlassDisc extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget disc = Container(
+    Widget disc = SizedBox(
       width: 88,
       height: 88,
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppColors.lineMuted),
-        boxShadow: AppColors.floatingShadow(blur: 24, y: 8, opacity: 0.4),
+      child: GlassSurface(
+        radius: 44,
+        strong: true,
+        glow: true,
+        child: Center(child: Icon(icon, size: 38, color: color)),
       ),
-      child: Icon(icon, size: 38, color: color),
     );
 
     if (pulse) {

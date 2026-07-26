@@ -1,18 +1,14 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/pnr_status.dart';
+import '../models/train_summary.dart';
+import 'railkit_mappers.dart';
+import 'railkit_service.dart';
+import 'rapidapi_service.dart';
 import 'train_repository.dart';
 
-/// Mock PNR lookup service.
-///
-/// Returns canned data after a short delay so the UI can exercise its loading,
-/// result and not-found states without a backend. Three featured sample PNRs
-/// map to the three showcase states; any other valid 10-digit PNR is resolved
-/// deterministically (sum of digits) so the demo stays predictable.
-///
-/// When wiring real data later, the client should call a Supabase **edge
-/// function** (as the existing `train_status` layer does) with the *anon* key
-/// only — the service-role key must never ship in the app.
+/// Real PNR lookup service backed by RapidAPI IRCTC.
 class PnrService {
   const PnrService();
 
@@ -27,27 +23,50 @@ class PnrService {
     (pnr: sampleMixed, label: 'Mixed'),
   ];
 
-  /// Look up [pnr] (assumed to already be 10 digits). Resolves to `null` for a
-  /// not-found result. Simulates network latency with an 800ms delay.
-  Future<PnrResult?> lookup(String pnr) async {
-    await Future.delayed(const Duration(milliseconds: 800));
+  /// Catalog train for a demo PNR. These numbers are known-present in the
+  /// verified catalog, so a miss is a programming error — we assert rather than
+  /// substituting some other train's details.
+  TrainSummary _demoTrain(String number) {
+    final t = trainRepository.resolveNumber(number);
+    assert(t != null, 'demo PNR references unknown train $number');
+    return t!;
+  }
 
-    switch (pnr) {
-      case sampleConfirmed:
-        return _confirmed(pnr);
-      case sampleWaitlisted:
-        return _waitlisted(pnr);
-      case sampleMixed:
-        return _mixed(pnr);
+  /// Look up a 10-digit PNR.
+  ///
+  /// Order: RailKit (via Supabase, cached + quota-tracked) → RapidAPI → sample.
+  /// A RailKit quota error is rethrown so the screen can show "check back
+  /// later" instead of falling back to sample data.
+  Future<PnrResult?> lookup(String pnr) async {
+    const railkit = RailKitService();
+    if (railkit.isAvailable) {
+      try {
+        final res = await railkit.checkPnr(pnr);
+        final parsed = pnrFromRailkit(res.data, pnr);
+        if (parsed != null) return parsed;
+      } on RailKitException catch (e) {
+        if (e.isQuota) rethrow; // surface; do NOT fall back to mock
+        debugPrint('[PnrService] RailKit note: $e');
+      } catch (e) {
+        debugPrint('[PnrService] RailKit unexpected: $e');
+      }
     }
 
-    // Deterministic fallback for any other valid PNR: sum the digits, then map
-    // mod 4 to a state. One bucket is reserved for a friendly not-found path.
-    final sum = pnr.codeUnits.fold<int>(0, (total, unit) => total + (unit - 48));
-    return switch (sum % 4) {
-      0 => _confirmed(pnr),
-      1 => _mixed(pnr),
-      2 => _waitlisted(pnr),
+    try {
+      final realResult = await rapidApiService.getPnrStatus(pnr);
+      if (realResult != null) return realResult;
+    } catch (e) {
+      debugPrint('[PnrService] RapidAPI PNR lookup notice: $e');
+    }
+
+    // DATA INTEGRITY: only the three explicitly-advertised demo PNRs may return
+    // canned data (they're surfaced as "sample" chips in the UI). Any OTHER pnr
+    // returns null -> "PNR not found", because inventing a confirmed booking
+    // for a real passenger's PNR is a trust-breaking bug.
+    return switch (pnr) {
+      sampleConfirmed => _confirmed(pnr),
+      sampleWaitlisted => _waitlisted(pnr),
+      sampleMixed => _mixed(pnr),
       _ => null,
     };
   }
@@ -66,7 +85,7 @@ class PnrService {
   PnrResult _confirmed(String pnr) {
     return PnrResult(
       pnr: pnr,
-      train: trainRepository.resolveNumber('12951'),
+      train: _demoTrain('12951'),
       journeyDate: _daysFromNow(1),
       travelClass: '3A',
       boardingCode: 'BCT',
@@ -95,7 +114,7 @@ class PnrService {
   PnrResult _waitlisted(String pnr) {
     return PnrResult(
       pnr: pnr,
-      train: trainRepository.resolveNumber('12621'),
+      train: _demoTrain('12621'),
       journeyDate: _daysFromNow(6),
       travelClass: 'SL',
       boardingCode: 'MAS',
@@ -119,7 +138,7 @@ class PnrService {
   PnrResult _mixed(String pnr) {
     return PnrResult(
       pnr: pnr,
-      train: trainRepository.resolveNumber('12259'),
+      train: _demoTrain('12259'),
       journeyDate: _daysFromNow(2),
       travelClass: '2A',
       boardingCode: 'SDAH',

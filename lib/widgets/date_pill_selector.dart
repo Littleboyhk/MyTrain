@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_colors.dart';
+import '../theme/glass_theme.dart';
 import '../theme/motion.dart';
 import '../utils/formatters.dart';
 import '../utils/haptics.dart';
@@ -81,13 +81,14 @@ class _DatePillSelectorState extends State<DatePillSelector> {
                 height: DatePillSelector.pillHeight,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    gradient: AppColors.accentGradient,
+                    gradient: GlassTheme.accent,
                     borderRadius: BorderRadius.circular(14),
-                    boxShadow: AppColors.glow(
-                      AppColors.accent,
-                      opacity: 0.35,
-                      blur: 16,
-                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: GlassTheme.accentIndigo.withValues(alpha: 0.35),
+                        blurRadius: 16,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -131,6 +132,7 @@ class _Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final g = context.glass;
     final topLabel = isToday ? 'Today' : Fmt.weekdayShort(day);
     final bottomLabel = '${Fmt.monthShort(day)} ${day.day}';
 
@@ -152,7 +154,7 @@ class _Pill extends StatelessWidget {
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
-                  color: selected ? Colors.white : AppColors.textPrimary,
+                  color: selected ? Colors.white : g.textPrimary,
                 ),
                 child: Text(topLabel),
               ),
@@ -161,12 +163,12 @@ class _Pill extends StatelessWidget {
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
                   color: selected
-                      ? Colors.white.withValues(alpha: 0.85)
-                      : AppColors.textMuted,
+                      ? Colors.white.withValues(alpha: 0.90)
+                      : g.textSecondary,
                 ),
                 child: Text(bottomLabel),
               ),
