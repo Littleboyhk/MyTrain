@@ -14,6 +14,7 @@ import 'l10n/app_localizations.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
+import 'widgets/app_text_defaults.dart';
 import 'widgets/aurora_background.dart';
 
 Future<void> main() async {
@@ -119,10 +120,17 @@ class MyTrainApp extends ConsumerWidget {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
           child: AuroraBackground(
-            child: child ?? const SizedBox.shrink(),
+            // Replaces MaterialApp's ugly fallback DefaultTextStyle, whose
+            // yellow double underline leaked into every Cupertino popup and
+            // overlay toast in the app. See AppTextDefaults.
+            child: AppTextDefaults(
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },
     );
   }
 }
+
+

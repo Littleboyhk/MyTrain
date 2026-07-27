@@ -138,7 +138,13 @@ class _LanguagePickerSheetState extends ConsumerState<_LanguagePickerSheet> {
                   child: GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    padding: const EdgeInsets.only(top: 4),
+                    // Top inset leaves room for the selected tile's checkmark
+                    // badge, which floats above the tile's top edge. With only
+                    // 4px here the scroll viewport clipped the badge — the Stack
+                    // below sets Clip.none, but the clip happens at the
+                    // scrollable's viewport, not at the Stack.
+                    padding: const EdgeInsets.only(top: 12),
+                    clipBehavior: Clip.none,
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
@@ -309,9 +315,13 @@ class _LanguageTile extends StatelessWidget {
               ),
             ),
             if (selected)
+              // Overhangs the tile's TOP edge only. It deliberately does not
+              // overhang the left: the left-column tiles sit flush against the
+              // scroll viewport's edge, so any negative `left` gets clipped and
+              // the tick shows up sliced in half.
               Positioned(
-                top: -6,
-                left: -6,
+                top: -7,
+                left: 4,
                 child: Container(
                   width: 22,
                   height: 22,

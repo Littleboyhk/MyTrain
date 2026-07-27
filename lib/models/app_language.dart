@@ -2,9 +2,15 @@ import 'dart:ui' show Locale;
 
 /// A language the user can pick for the app.
 ///
-/// SCOPE NOTE: selecting a language currently only stores the preference —
-/// app text is NOT translated yet. Actual localization (string extraction,
-/// .arb files, flutter_localizations) is a separate, much larger task.
+/// Selecting one persists the choice AND re-renders the whole app in that
+/// locale: `main.dart` feeds [locale] to `MaterialApp`, and translations live in
+/// `lib/l10n/*.arb` (generated into `app_localizations_*.dart`). Keys missing
+/// from a translated .arb fall back to English automatically.
+///
+/// Glyph coverage for these scripts is NOT automatic — Roboto has none of them.
+/// The Noto Sans faces bundled in `pubspec.yaml` and wired up as
+/// `AppTheme.indicFontFallback` are what stop this text rendering as tofu boxes.
+/// Adding a language in a new script means adding its Noto face too.
 ///
 /// [script] is a single letter written in the language's own script, used as
 /// the tile glyph (like Where Is My Train's picker). [endonym] is the language

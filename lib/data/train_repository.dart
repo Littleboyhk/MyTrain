@@ -425,9 +425,39 @@ class TrainRepository {
     return null;
   }
 
+  /// In-flight searches, keyed `FROM|TO`. NOT a result cache — entries are
+  /// removed the moment the request settles.
+  ///
+  /// QUOTA FIX: tapping Search fires two identical lookups at once — the home
+  /// screen fetches for its inline list while the results screen it just pushed
+  /// fetches for the list. Both missed the server cache before either could
+  /// write it, so ONE user action cost TWO of the 50 monthly RailKit requests
+  /// (confirmed in railkit_api_log: two `search:KYJ:SBC` rows 119ms apart).
+  /// Concurrent callers now share a single Future and therefore a single request.
+  ///
+  /// Keyed without the date on purpose, matching the server cache key: RailKit's
+  /// search ignores the date, so same-route requests are interchangeable.
+  static final Map<String, Future<List<TrainSummary>>> _inFlight = {};
+
   /// Returns real verified trains for the station pair.
-  /// Returns real verified trains for the station pair via RapidAPI IRCTC.
   Future<List<TrainSummary>> betweenStations(
+    RailStation from,
+    RailStation to, {
+    DateTime? date,
+  }) {
+    final key = '${from.code.toUpperCase()}|${to.code.toUpperCase()}';
+    final existing = _inFlight[key];
+    if (existing != null) {
+      debugPrint('[TrainRepository] joining in-flight search $key '
+          '(saved a RailKit request)');
+      return existing;
+    }
+    final future = _fetchBetween(from, to, date: date);
+    _inFlight[key] = future;
+    return future.whenComplete(() => _inFlight.remove(key));
+  }
+
+  Future<List<TrainSummary>> _fetchBetween(
     RailStation from,
     RailStation to, {
     DateTime? date,

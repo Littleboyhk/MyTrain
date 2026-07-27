@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
+import '../data/chat_gate_controller.dart';
 import '../data/crowd_position_service.dart';
 import '../data/tracking_controller.dart';
 import '../data/train_status_service.dart';
@@ -13,6 +14,7 @@ import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
 import '../utils/haptics.dart';
 import '../widgets/bottom_action_bar.dart';
+import '../widgets/phone_verification_sheet.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/inside_train_sheet.dart';
 import '../widgets/journey_hero_card.dart';
@@ -136,6 +138,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                 onAlarm: () => _onAlarm(state),
                 onCoach: _onCoach,
                 onShare: _onShare,
+                onChat: _onChat,
               ),
             ),
           if (sharing.active)
@@ -352,6 +355,36 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       action: L10n.of(context).gotIt,
       onAction: () {},
     );
+  }
+
+  /// "Join chat": run the account gate (phone verification + 18+ attestation),
+  /// then hand off to the journey verification sampler.
+  ///
+  /// [startChatJoin] does its own pre-flight, so an already-verified returning
+  /// user never sees the sheet at all.
+  Future<void> _onChat() async {
+    Haptics.tap();
+    final outcome = await startChatJoin(context, ref);
+    if (!mounted) return;
+
+    switch (outcome) {
+      case ChatJoinOutcome.verified:
+        // Control passes to the existing gate: GPS route-matching starts here.
+        ref.read(chatGateProvider.notifier).requestAccess(
+              trainNumber: _trainNumber,
+              journeyDate: _journeyDate,
+            );
+        _toast(Icons.forum_rounded, 'Verifying your journey…');
+      case ChatJoinOutcome.declined:
+        _toast(
+          Icons.info_outline_rounded,
+          'Chat is only for passengers aged 18 and over.',
+        );
+      case ChatJoinOutcome.unavailable:
+        _toast(Icons.cloud_off_rounded, 'Chat isn\'t available right now.');
+      case ChatJoinOutcome.dismissed:
+        break; // Silent: they closed the sheet on purpose.
+    }
   }
 
   void _onShare() {

@@ -49,22 +49,32 @@ class _ActionButtonState extends State<ActionButton> {
       glowColor: AppColors.accent,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _animatedIcon(),
-            const SizedBox(height: 5),
-            Text(
-              widget.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.label.copyWith(
-                fontSize: 11.5,
-                color: AppColors.textSecondary,
-                fontWeight: FontWeight.w600,
+        // Fill the cell width so the Column actually centres in it. Pressable
+        // hosts its child in a Stack aligned top-start, which hands a
+        // MainAxisSize.min column only loose width — so without this the
+        // icon+label shrink-wrap and pin to the left of the cell. Harmless with
+        // the old long labels (they nearly filled the cell); obvious once the
+        // 4-up bar shortened them to "Alarm"/"Coach"/"Share".
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _animatedIcon(),
+              const SizedBox(height: 5),
+              Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.label.copyWith(
+                  fontSize: 11.5,
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

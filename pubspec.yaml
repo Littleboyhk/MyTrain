@@ -73,6 +73,11 @@ flutter:
 
   assets:
     - assets/data/stations.json
+    # Station coordinates for the nearest-station lookup, as { CODE: [lat, lng] }.
+    # Built from the same DataMeet Indian Railways open dataset as
+    # stations.json (which ships without geometry). 222 KB, 8,697 of 8,989
+    # codes (96.8%); loaded lazily on first use, never at launch.
+    - assets/data/station_coords.json
     - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
@@ -81,22 +86,62 @@ flutter:
   # For details regarding adding assets from package dependencies, see
   # https://flutter.dev/to/asset-from-package
 
-  # To add custom fonts to your application, add a fonts section here,
-  # in this "flutter" section. Each entry in this list should have a
-  # "family" key with the font family name, and a "fonts" key with a
-  # list giving the asset and other descriptors for the font. For
-  # example:
-  # fonts:
-  #   - family: Schyler
-  #     fonts:
-  #       - asset: fonts/Schyler-Regular.ttf
-  #       - asset: fonts/Schyler-Italic.ttf
-  #         style: italic
-  #   - family: Trajan Pro
-  #     fonts:
-  #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
-  #         weight: 700
+  # Noto Sans faces for the Indic scripts used by the app's 13 locales.
   #
+  # These are never set as a primary fontFamily — they are wired into every text
+  # style as `fontFamilyFallback` (see AppTheme.indicFontFallback), so Roboto
+  # still draws Latin and Noto only supplies glyphs Roboto lacks.
+  #
+  # Static Regular + Bold per script (no variable fonts): the app's text styles
+  # span w500-w800, which Flutter resolves to the nearest declared weight.
+  # 9 scripts x 2 weights = 18 files, ~2.7 MB uncompressed. See the size notes in
+  # the fix report before adding more weights.
+  fonts:
+    - family: NotoSansDevanagari # hi, mr
+      fonts:
+        - asset: assets/fonts/NotoSansDevanagari-Regular.ttf
+        - asset: assets/fonts/NotoSansDevanagari-Bold.ttf
+          weight: 700
+    - family: NotoSansMalayalam # ml
+      fonts:
+        - asset: assets/fonts/NotoSansMalayalam-Regular.ttf
+        - asset: assets/fonts/NotoSansMalayalam-Bold.ttf
+          weight: 700
+    - family: NotoSansTamil # ta
+      fonts:
+        - asset: assets/fonts/NotoSansTamil-Regular.ttf
+        - asset: assets/fonts/NotoSansTamil-Bold.ttf
+          weight: 700
+    - family: NotoSansKannada # kn
+      fonts:
+        - asset: assets/fonts/NotoSansKannada-Regular.ttf
+        - asset: assets/fonts/NotoSansKannada-Bold.ttf
+          weight: 700
+    - family: NotoSansTelugu # te
+      fonts:
+        - asset: assets/fonts/NotoSansTelugu-Regular.ttf
+        - asset: assets/fonts/NotoSansTelugu-Bold.ttf
+          weight: 700
+    - family: NotoSansBengali # bn, as
+      fonts:
+        - asset: assets/fonts/NotoSansBengali-Regular.ttf
+        - asset: assets/fonts/NotoSansBengali-Bold.ttf
+          weight: 700
+    - family: NotoSansGujarati # gu
+      fonts:
+        - asset: assets/fonts/NotoSansGujarati-Regular.ttf
+        - asset: assets/fonts/NotoSansGujarati-Bold.ttf
+          weight: 700
+    - family: NotoSansGurmukhi # pa
+      fonts:
+        - asset: assets/fonts/NotoSansGurmukhi-Regular.ttf
+        - asset: assets/fonts/NotoSansGurmukhi-Bold.ttf
+          weight: 700
+    - family: NotoSansOriya # or
+      fonts:
+        - asset: assets/fonts/NotoSansOriya-Regular.ttf
+        - asset: assets/fonts/NotoSansOriya-Bold.ttf
+          weight: 700
+
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package

@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 import '../data/language_controller.dart';
+import '../data/nearest_station_service.dart';
+import '../data/recent_trains_service.dart';
 import '../data/train_repository.dart';
 import '../l10n/app_localizations.dart';
 import '../models/rail_station.dart';
@@ -16,6 +18,7 @@ import '../utils/haptics.dart';
 import '../widgets/glass.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/language_picker_sheet.dart';
+import '../widgets/liquid_glass_button.dart';
 import '../widgets/mesh_background.dart';
 import '../widgets/train_number_tag.dart';
 import 'live_tracking_screen.dart';
@@ -71,11 +74,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   _SearchMode _mode = _SearchMode.route;
   RailStation? _fromStation = const RailStation(code: 'KYJ', name: 'Kayankulam Jn');
   RailStation? _toStation = const RailStation(code: 'SBC', name: 'KSR Bengaluru');
-  // Route results are null until "Search Trains" is tapped (show the default
-  // catalog before that). Bumped token re-triggers the list stagger animation.
-  List<TrainSummary>? _routeResults;
-  int _routeSearchToken = 0;
   final TextEditingController _numberCtrl = TextEditingController();
+
+  /// Nearest-station pill state. Null until the user taps it.
+  RailStation? _nearestStation;
+  String? _nearestDistance;
+  bool _locatingNearest = false;
   String _numberQuery = '';
 
   int _row1 = 0; // All Trains
@@ -140,11 +144,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // -------------------------------------------------------------------------
   // Data
   // -------------------------------------------------------------------------
+  /// Trains the user has opened before, newest first.
+  List<TrainSummary> get _recentTrains => ref.watch(recentTrainsProvider);
+
   bool get _hasSearched {
     if (_mode == _SearchMode.number) {
       return _numberQuery.trim().isNotEmpty;
     }
-    return _routeResults != null;
+    // Route mode now lists RECENT trains, so the section appears whenever there
+    // is history — not only after a search. Full results live on the dedicated
+    // results screen that "Search Trains" pushes.
+    return _recentTrains.isNotEmpty;
   }
 
   List<TrainSummary> get _visible {
@@ -155,7 +165,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ? const []
           : trainRepository.searchByNumberOrName(q);
     } else {
-      list = _routeResults?.toList() ?? const [];
+      list = _recentTrains;
     }
 
     // Category chips (Express/Superfast/…) refine whichever mode is active.
@@ -175,11 +185,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   String _listHeaderText(L10n t, int count) {
-    if (_mode == _SearchMode.route &&
-        _routeResults != null &&
-        _fromStation != null &&
-        _toStation != null) {
-      return t.countOnRoute(count, _fromStation!.code, _toStation!.code);
+    if (_mode == _SearchMode.route) {
+      // Reuses the existing `sectionRecent` key, already translated into all 13
+      // locales, so this adds no untranslated string.
+      return '${t.sectionRecent} · $count';
     }
     if (_mode == _SearchMode.number && _numberQuery.trim().isNotEmpty) {
       return t.countMatching(count, _numberQuery.trim());
@@ -199,6 +208,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // -------------------------------------------------------------------------
   void _openTracking(TrainSummary t) {
     FocusManager.instance.primaryFocus?.unfocus();
+    // Opening a train is what makes it "recent".
+    ref.read(recentTrainsProvider.notifier).add(t);
     Navigator.of(context).push(
       CupertinoPageRoute(builder: (_) => LiveTrackingScreen(train: t)),
     );
@@ -229,7 +240,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       } else {
         _toStation = result;
       }
-      _routeResults = null; // inputs changed — require a fresh search
     });
   }
 
@@ -238,7 +248,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final tmp = _fromStation;
       _fromStation = _toStation;
       _toStation = tmp;
-      _routeResults = null;
     });
   }
 
@@ -267,15 +276,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
 
-    trainRepository.betweenStations(from, to).then((results) {
-      if (!mounted) return;
-      setState(() {
-        _routeResults = results;
-        _routeSearchToken++;
-      });
-    }).catchError((dynamic e) {
-      debugPrint('[HomeScreen] Route search fetch note: $e');
-    });
+    // No fetch here any more. The home list shows RECENT trains, and the
+    // results screen we just pushed does its own (cached, quota-counted) fetch.
+    // This used to duplicate that call, costing 2 of the 50 monthly RailKit
+    // requests per search until the in-flight de-dupe collapsed them into 1;
+    // now it costs exactly 1.
   }
 
   void _onRow1(int i) {
@@ -505,7 +510,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
         ),
         child: KeyedSubtree(
-          key: ValueKey('$_mode|$_row1|${_row2 ?? '-'}|$_routeSearchToken'),
+          // Keyed on the list identity so the stagger replays when the recents
+          // change (a newly opened train jumps to the front).
+          key: ValueKey('$_mode|$_row1|${_row2 ?? '-'}|'
+              '${trains.length}|${trains.isEmpty ? '' : trains.first.number}'),
           child: trains.isEmpty
               ? _emptyState(g)
               : AnimationLimiter(
@@ -625,6 +633,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // -------- Top bar --------
+  /// Resolves the user's nearest station and shows it in the top-right pill.
+  ///
+  /// Location is requested here and nowhere else, so the prompt always follows
+  /// an explicit tap. Lookup is fully local (bundled coordinates) — no API call,
+  /// no quota.
+  Future<void> _findNearestStation() async {
+    if (_locatingNearest) return;
+    Haptics.tap();
+    setState(() => _locatingNearest = true);
+
+    final result = await ref.read(nearestStationServiceProvider).find();
+    if (!mounted) return;
+
+    switch (result) {
+      case NearestStationFound(:final station, :final distanceLabel):
+        setState(() {
+          _locatingNearest = false;
+          _nearestStation = station;
+          _nearestDistance = distanceLabel;
+        });
+        _showToast('Nearest station: ${station.name} '
+            '(${station.code}) · $distanceLabel away');
+      case NearestStationFailure(:final message):
+        setState(() => _locatingNearest = false);
+        _showToast(message);
+    }
+  }
+
   Widget _topBar(GlassTheme g) {
     return Row(
       children: [
@@ -653,30 +689,63 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
         const Spacer(),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _showToast(L10n.of(context).usingNearestStation),
-          child: GlassSurface(
-            radius: 999,
-            blur: 18,
-            pill: true,
-            compact: true,
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.location_on_rounded,
-                    size: 15, color: GlassTheme.accentViolet),
-                const SizedBox(width: 6),
-                Text(
-                  L10n.of(context).nearestStation,
-                  style: TextStyle(
-                    color: g.textPrimary,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
+        // Constrained so a long station name can't shove the title off-screen.
+        Flexible(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _findNearestStation,
+            child: GlassSurface(
+              radius: 999,
+              blur: 18,
+              pill: true,
+              compact: true,
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_locatingNearest)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation(GlassTheme.accentViolet),
+                      ),
+                    )
+                  else
+                    const Icon(Icons.location_on_rounded,
+                        size: 15, color: GlassTheme.accentViolet),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      _locatingNearest
+                          ? 'Locating…'
+                          // Once resolved, the pill becomes the answer.
+                          : (_nearestStation?.name ??
+                              L10n.of(context).nearestStation),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: g.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                  if (!_locatingNearest && _nearestDistance != null) ...[
+                    const SizedBox(width: 5),
+                    Text(
+                      _nearestDistance!,
+                      style: TextStyle(
+                        color: g.textMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -836,46 +905,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  /// Primary CTA, on the shared Liquid Glass button.
+  ///
+  /// Was a hand-rolled `Ink` + flat gradient + Material ripple, which read as a
+  /// solid plastic pill rather than glass. [LiquidGlassButton] brings the real
+  /// recipe the rest of the app uses: backdrop blur with vibrancy, a specular
+  /// top-edge rim, a squircle (continuous-corner) shape, a scale-down on press
+  /// and a glow radiating from the tap point — plus the [GlassQuality] fallback
+  /// that drops blur automatically on devices that can't keep up.
   Widget _searchTrainsButton(GlassTheme g) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _runRouteSearch,
-        borderRadius: BorderRadius.circular(999),
-        splashColor: Colors.white24,
-        highlightColor: Colors.white10,
-        child: Ink(
-          height: 52,
-          decoration: BoxDecoration(
-            gradient: GlassTheme.accent,
-            borderRadius: BorderRadius.circular(999),
-            boxShadow: [
-              BoxShadow(
-                color: GlassTheme.accentIndigo.withValues(alpha: 0.5),
-                blurRadius: 18,
-                spreadRadius: -3,
-              ),
-            ],
-          ),
-          child: Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.search_rounded,
-                    size: 19, color: Colors.white),
-                const SizedBox(width: 8),
-                Text(
-                  L10n.of(context).searchTrains,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+    return LiquidGlassButton(
+      onPressed: _runRouteSearch,
+      expand: true,
+      // Pill, matching the shape it replaces. The squircle is applied inside.
+      cornerRadius: 999,
+      tint: AppColors.accent,
+      // Indigo, matching the glow the old flat pill cast — AppColors.accent and
+      // accentViolet are the same 0xFF8B5CF6, so tinting the glow with either
+      // would be invisible against the fill.
+      glowColor: GlassTheme.accentIndigo,
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      semanticLabel: L10n.of(context).searchTrains,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.search_rounded, size: 19, color: Colors.white),
+          const SizedBox(width: 9),
+          Text(
+            L10n.of(context).searchTrains,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
             ),
           ),
-        ),
+        ],
       ),
     );
   }

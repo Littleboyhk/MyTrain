@@ -19,9 +19,16 @@ import '../theme/glass_theme.dart';
 /// **Monday-first** (`runsOnWeekday` handles the offset), while the display
 /// order here is Sunday-first to match common Indian rail apps.
 class RunningDaysRow extends StatelessWidget {
-  const RunningDaysRow({super.key, required this.train});
+  const RunningDaysRow({super.key, required this.train, this.highlightDate});
 
   final TrainSummary train;
+
+  /// Which day to mark as "the one you're looking at" — underlined. Defaults to
+  /// today; pass the selected date when the list is filtered to a specific day.
+  ///
+  /// Marking is independent of running/not-running: an underlined but dimmed
+  /// letter is the useful signal "this train does NOT run on your date".
+  final DateTime? highlightDate;
 
   /// Display order: Sunday → Saturday, expressed as Dart weekday constants.
   static const List<int> _displayOrder = [
@@ -67,6 +74,7 @@ class RunningDaysRow extends StatelessWidget {
     }
 
     final letters = _letters(t);
+    final marked = (highlightDate ?? DateTime.now()).weekday;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -78,6 +86,7 @@ class RunningDaysRow extends StatelessWidget {
                 g,
                 letters[i],
                 on: train.runsOnWeekday(_displayOrder[i]) ?? false,
+                marked: _displayOrder[i] == marked,
               ),
             ],
             if (train.runsUntilLabel != null) ...[
@@ -98,13 +107,22 @@ class RunningDaysRow extends StatelessWidget {
     return const ['S', 'M', 'T', 'W', 'Th', 'F', 'Sa'];
   }
 
-  Widget _dayLetter(GlassTheme g, String label, {required bool on}) {
+  Widget _dayLetter(
+    GlassTheme g,
+    String label, {
+    required bool on,
+    bool marked = false,
+  }) {
+    final color = on ? g.statusGreen : g.textMuted.withValues(alpha: 0.55);
     return Text(
       label,
       style: AppText.label.copyWith(
-        color: on ? g.statusGreen : g.textMuted.withValues(alpha: 0.55),
+        color: color,
         fontSize: 12.5,
-        fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+        fontWeight: on || marked ? FontWeight.w700 : FontWeight.w500,
+        decoration: marked ? TextDecoration.underline : null,
+        decorationColor: color,
+        decorationThickness: 2,
       ),
     );
   }

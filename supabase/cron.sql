@@ -69,3 +69,24 @@ select cron.schedule(
 -- To inspect / remove:
 --   select * from cron.job;
 --   select cron.unschedule('refresh-active-trains');
+
+-- ---------------------------------------------------------------------------
+-- Journey chat retention. Runs in-database (no Edge Function needed).
+--
+-- Deletes rooms past expires_at — scheduled arrival + 3h — cascading to
+-- messages, participants, mutes and the GPS verification samples. Reports are
+-- detached rather than deleted and are purged separately at 90 days.
+--
+-- Every 15 minutes rather than hourly: this data is the most sensitive in the
+-- schema (location traces, private conversations), so the window between the
+-- promised deletion time and the actual delete stays short.
+--
+-- NOT COVERED: storage objects for image messages. Images are not enabled, and
+-- when they are, this job needs a companion sweep — SQL cascade does not remove
+-- objects from storage.
+-- ---------------------------------------------------------------------------
+select cron.schedule(
+  'purge-expired-journey-chats',
+  '*/15 * * * *',
+  $$ select public.chat_purge_expired(); $$
+);

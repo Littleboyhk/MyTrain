@@ -5,6 +5,7 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 import '../data/railkit_service.dart';
 import '../data/rapidapi_service.dart';
+import '../data/recent_trains_service.dart';
 import '../data/train_platform_provider.dart';
 import '../data/train_repository.dart';
 import '../l10n/app_localizations.dart';
@@ -14,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
 import '../theme/motion.dart';
 import '../utils/haptics.dart';
+import '../widgets/glass_container.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/icon_action_button.dart';
 import '../widgets/journey_duration_bar.dart';
@@ -22,8 +24,21 @@ import '../widgets/running_days_row.dart';
 import '../widgets/train_number_tag.dart';
 import 'live_tracking_screen.dart';
 
-/// Shows verified search results for a chosen route (FROM → TO).
-class TrainResultsScreen extends StatelessWidget {
+/// Search results for a chosen route (FROM → TO).
+///
+/// DATA + QUOTA NOTES
+/// ------------------
+/// Results come from `trainRepository.betweenStations`, which goes through the
+/// `search-trains` Edge Function — server-side cached under `search:FROM:TO` and
+/// counted against the 50/month RailKit budget. This screen deliberately adds NO
+/// direct call path.
+///
+/// The search is fetched ONCE and every filter/sort here is applied client-side.
+/// That is not just an optimisation: the cache key intentionally omits the date
+/// (RailKit's search ignores it, and a 3-argument call returns HTTP 502), so a
+/// date change could not produce different results anyway. Refetching per filter
+/// tap would burn quota for an identical payload.
+class TrainResultsScreen extends ConsumerStatefulWidget {
   const TrainResultsScreen({
     super.key,
     required this.from,
@@ -36,6 +51,182 @@ class TrainResultsScreen extends StatelessWidget {
   final DateTime date;
 
   @override
+  ConsumerState<TrainResultsScreen> createState() => _TrainResultsScreenState();
+}
+
+/// Which departure date the list is filtered to.
+enum _DateFilter { allDates, today, tomorrow, calendar }
+
+enum _SortBy { departure, arrival }
+
+class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
+  late Future<List<TrainSummary>> _future;
+
+  _DateFilter _dateFilter = _DateFilter.allDates;
+  DateTime? _calendarDate;
+  _SortBy _sort = _SortBy.departure;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = trainRepository.betweenStations(
+      widget.from,
+      widget.to,
+      date: widget.date,
+    );
+  }
+
+  /// The date the filter resolves to, or null for "All Dates".
+  DateTime? get _effectiveDate {
+    final now = DateTime.now();
+    return switch (_dateFilter) {
+      _DateFilter.allDates => null,
+      _DateFilter.today => DateTime(now.year, now.month, now.day),
+      _DateFilter.tomorrow =>
+        DateTime(now.year, now.month, now.day).add(const Duration(days: 1)),
+      _DateFilter.calendar => _calendarDate,
+    };
+  }
+
+  String get _datePillLabel => switch (_dateFilter) {
+        _DateFilter.allDates => 'All Dates',
+        _DateFilter.today => 'Today',
+        _DateFilter.tomorrow => 'Tomorrow',
+        _DateFilter.calendar => _calendarDate == null
+            ? 'All Dates'
+            : '${_calendarDate!.day} ${_monthName(_calendarDate!.month)}',
+      };
+
+  static String _monthName(int m) => const [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ][m - 1];
+
+  // ---------------------------------------------------------------------------
+  // Filtering + sorting (all client-side, see class doc)
+  // ---------------------------------------------------------------------------
+
+  /// Drops trains that don't run on the selected date.
+  ///
+  /// Uses RailKit's real `running_days` mask. A train whose mask is unknown is
+  /// KEPT — hiding a service because we lack data would be worse than showing it.
+  List<TrainSummary> _applyFilters(List<TrainSummary> trains) {
+    final date = _effectiveDate;
+    var out = trains;
+    if (date != null) {
+      out = trains.where((t) {
+        final runs = t.runsOnWeekday(date.weekday);
+        return runs ?? true;
+      }).toList();
+    }
+
+    out = [...out]..sort((a, b) {
+      final av = _minutes(_sort == _SortBy.departure ? a.departure : a.arrival);
+      final bv = _minutes(_sort == _SortBy.departure ? b.departure : b.arrival);
+      if (av == null || bv == null) return 0;
+      return av.compareTo(bv);
+    });
+    return out;
+  }
+
+  static int? _minutes(String hhmm) {
+    final m = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(hhmm.trim());
+    if (m == null) return null;
+    return int.parse(m.group(1)!) * 60 + int.parse(m.group(2)!);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+
+  void _track(TrainSummary train) {
+    Haptics.tap();
+    // Feeds the home screen's RECENT list — this is the main path by which a
+    // train becomes "recently searched".
+    ref.read(recentTrainsProvider.notifier).add(train);
+    Navigator.of(context).push(
+      CupertinoPageRoute(builder: (_) => LiveTrackingScreen(train: train)),
+    );
+  }
+
+  Future<void> _openDateSheet() async {
+    Haptics.tap();
+    final picked = await _showDateFilterSheet(
+      context,
+      originName: widget.from.name,
+      current: _dateFilter,
+    );
+    if (picked == null || !mounted) return;
+
+    if (picked == _DateFilter.calendar) {
+      final now = DateTime.now();
+      final day = await showDatePicker(
+        context: context,
+        initialDate: _calendarDate ?? now,
+        firstDate: DateTime(now.year, now.month, now.day),
+        lastDate: now.add(const Duration(days: 120)),
+      );
+      if (day == null || !mounted) return;
+      setState(() {
+        _dateFilter = _DateFilter.calendar;
+        _calendarDate = day;
+      });
+      return;
+    }
+    setState(() => _dateFilter = picked);
+  }
+
+  void _toggleSort() {
+    Haptics.selection();
+    setState(() {
+      _sort = _sort == _SortBy.departure ? _SortBy.arrival : _SortBy.departure;
+    });
+  }
+
+  /// Glass toast, matching the pattern used on the settings screen.
+  void _toast(String message) {
+    final g = context.glass;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: 24,
+        right: 24,
+        bottom: 140,
+        child: IgnorePointer(
+          child: Center(
+            child: GlassContainer(
+              radius: 16,
+              blurSigma: 22,
+              strong: true,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: AppText.label.copyWith(
+                  color: g.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(milliseconds: 2600), entry.remove);
+  }
+
+  // These three actions have NO data source behind them yet. They are wired to
+  // an honest explanation rather than a fake result — see the report.
+  void _notAvailable(String what) {
+    Haptics.tap();
+    _toast(what);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -44,138 +235,138 @@ class TrainResultsScreen extends StatelessWidget {
           const Positioned.fill(child: MeshBackground()),
           SafeArea(
             bottom: false,
-            child: FutureBuilder<List<TrainSummary>>(
-              future: trainRepository.betweenStations(from, to, date: date),
-              builder: (context, snapshot) {
-                final g = context.glass;
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Column(
-                    children: [
-                      _header(context, 0),
-                      const Expanded(
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: GlassTheme.accentViolet,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }
+            child: Column(
+              children: [
+                _appBar(),
+                _filterRow(),
+                Expanded(child: _results()),
+              ],
+            ),
+          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: _bottomBar()),
+        ],
+      ),
+    );
+  }
 
-                if (snapshot.hasError) {
-                  final err = snapshot.error;
-                  final bool quota =
-                      err is RailKitException && err.isQuota;
-                  final String errorMsg = quota
-                      ? 'Live railway data is temporarily unavailable — the monthly request limit was reached. Please check back later.'
-                      : err is RapidApiException
-                          ? err.message
-                          : L10n.of(context).unableToFetchRoute;
-                  return Column(
-                    children: [
-                      _header(context, 0),
-                      Expanded(
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  quota
-                                      ? Icons.hourglass_bottom_rounded
-                                      : Icons.cloud_off_rounded,
-                                  size: 48,
-                                  color: quota ? g.statusPurple : g.statusRed,
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  errorMsg,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: g.textPrimary,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }
+  // ---------------------------------------------------------------------------
+  // 1) App bar
+  // ---------------------------------------------------------------------------
+  Widget _appBar() {
+    final g = context.glass;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 10),
+      child: Row(
+        children: [
+          IconActionButton(
+            icon: Icons.arrow_back_ios_new_rounded,
+            iconSize: 18,
+            background: false,
+            onTap: () => Navigator.of(context).maybePop(),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              'Search Results',
+              style: AppText.titleStrong
+                  .copyWith(color: g.textPrimary, fontSize: 19),
+            ),
+          ),
+          IconActionButton(
+            icon: Icons.ios_share_rounded,
+            iconSize: 18,
+            background: false,
+            onTap: () => _notAvailable(
+              'Sharing a result list isn\'t built yet.',
+            ),
+          ),
+          _overflowMenu(g),
+        ],
+      ),
+    );
+  }
 
-                final results = snapshot.data ?? [];
-                if (results.isEmpty) {
-                  return Column(
-                    children: [
-                      _header(context, 0),
-                      Expanded(
-                        child: Center(
-                          child: Text(
-                            'No trains found for ${from.code} → ${to.code}',
-                            style: TextStyle(color: g.textSecondary, fontSize: 15),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }
+  Widget _overflowMenu(GlassTheme g) {
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert_rounded, size: 20, color: g.textSecondary),
+      color: g.isDark ? const Color(0xFF16161C) : Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      onSelected: (value) {
+        switch (value) {
+          case 'refresh':
+            Haptics.tap();
+            // Goes back through the cached path, so this is quota-safe until the
+            // server-side cache entry expires.
+            setState(() {
+              _future = trainRepository.betweenStations(
+                widget.from,
+                widget.to,
+                date: widget.date,
+              );
+            });
+          case 'report':
+            _reportMissing();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'refresh',
+          child: Text('Refresh results',
+              style: AppText.label.copyWith(color: g.textPrimary)),
+        ),
+        PopupMenuItem(
+          value: 'report',
+          child: Text('Report missing train',
+              style: AppText.label.copyWith(color: g.textPrimary)),
+        ),
+      ],
+    );
+  }
 
-                // Group by the actual leg each train serves. Searching "SBC"
-                // legitimately returns Bengaluru-cluster terminals (SMVB, YPR,
-                // KJM), so each destination gets its own section header rather
-                // than being silently lumped together.
-                final rows = _groupByLeg(results);
+  void _reportMissing() => _notAvailable(
+        'Reporting a missing train needs a backend that doesn\'t exist yet.',
+      );
 
-                return Column(
-                  children: [
-                    _header(context, results.length),
-                    Expanded(
-                      child: AnimationLimiter(
-                        child: ListView.builder(
-                          physics: const BouncingScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                          itemCount: rows.length,
-                          itemBuilder: (context, i) {
-                            final row = rows[i];
-                            return AnimationConfiguration.staggeredList(
-                              position: i,
-                              duration: Motion.listItem,
-                              delay: Motion.listStagger,
-                              child: SlideAnimation(
-                                verticalOffset: 26,
-                                curve: Motion.standard,
-                                child: FadeInAnimation(
-                                  curve: Motion.standard,
-                                  child: row.train == null
-                                      ? _LegHeader(
-                                          fromName: row.fromName,
-                                          toName: row.toName,
-                                        )
-                                      : _TrainCard(
-                                          train: row.train!,
-                                          onTap: () =>
-                                              _track(context, row.train!),
-                                          boardingCode: from.code,
-                                          // Only the top few auto-load their
-                                          // platform; the rest fetch on tap.
-                                          autoFetchPlatform: row.cardIndex <
-                                              _kAutoPlatformLookups,
-                                        ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
+  // ---------------------------------------------------------------------------
+  // 2) Filter row
+  // ---------------------------------------------------------------------------
+  Widget _filterRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: _FilterPill(
+              label: _datePillLabel,
+              icon: Icons.calendar_today_rounded,
+              trailingChevron: true,
+              active: _dateFilter != _DateFilter.allDates,
+              onTap: _openDateSheet,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _FilterPill(
+              label: 'Show fares',
+              icon: Icons.currency_rupee_rounded,
+              // RailKit's search payload carries no fare/class/availability
+              // fields at all, so this cannot be a working toggle. Rendered
+              // unavailable rather than faked.
+              unavailable: true,
+              onTap: () => _notAvailable(
+                'Fares aren\'t in our rail data source yet.',
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _FilterPill(
+              label: _sort == _SortBy.departure ? 'Departure' : 'Arrival',
+              icon: _sort == _SortBy.departure
+                  ? Icons.north_east_rounded
+                  : Icons.south_west_rounded,
+              active: true,
+              onTap: _toggleSort,
             ),
           ),
         ],
@@ -183,51 +374,217 @@ class TrainResultsScreen extends StatelessWidget {
     );
   }
 
-  void _track(BuildContext context, TrainSummary train) {
-    Navigator.of(context).push(
-      CupertinoPageRoute(builder: (_) => LiveTrackingScreen(train: train)),
+  // ---------------------------------------------------------------------------
+  // Results list
+  // ---------------------------------------------------------------------------
+  Widget _results() {
+    return FutureBuilder<List<TrainSummary>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final g = context.glass;
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: GlassTheme.accentViolet),
+          );
+        }
+        if (snapshot.hasError) return _errorState(snapshot.error);
+
+        final all = snapshot.data ?? const <TrainSummary>[];
+        if (all.isEmpty) {
+          return _message(
+            Icons.search_off_rounded,
+            'No trains found for ${widget.from.code} → ${widget.to.code}',
+            g.textSecondary,
+          );
+        }
+
+        final filtered = _applyFilters(all);
+        if (filtered.isEmpty) {
+          return _message(
+            Icons.event_busy_rounded,
+            'None of the ${all.length} trains on this route run on '
+            '$_datePillLabel.',
+            g.textSecondary,
+          );
+        }
+
+        final rows = _groupByLeg(filtered);
+
+        return AnimationLimiter(
+          child: ListView.builder(
+            physics: const BouncingScrollPhysics(),
+            // Bottom padding clears the sticky action bar.
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 130),
+            itemCount: rows.length + 1,
+            itemBuilder: (context, i) {
+              if (i == rows.length) return _reportMissingLink();
+              final row = rows[i];
+              return AnimationConfiguration.staggeredList(
+                position: i,
+                duration: Motion.listItem,
+                delay: Motion.listStagger,
+                child: SlideAnimation(
+                  verticalOffset: 26,
+                  curve: Motion.standard,
+                  child: FadeInAnimation(
+                    curve: Motion.standard,
+                    child: row.train == null
+                        // 3) Route band, repeated as a section divider whenever
+                        // results span more than one origin/destination pair.
+                        ? RouteHeaderBand(
+                            fromCode: row.fromCode,
+                            fromName: row.fromName,
+                            toCode: row.toCode,
+                            toName: row.toName,
+                          )
+                        : _TrainCard(
+                            train: row.train!,
+                            onTap: () => _track(row.train!),
+                            boardingCode: widget.from.code,
+                            highlightDate: _effectiveDate,
+                            autoFetchPlatform:
+                                row.cardIndex < _kAutoPlatformLookups,
+                          ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
-  Widget _header(BuildContext context, int count) {
+  Widget _errorState(Object? err) {
     final g = context.glass;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 16, 16),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: g.border.withValues(alpha: 0.15)),
+    final quota = err is RailKitException && err.isQuota;
+    final message = quota
+        ? 'Live railway data is temporarily unavailable — the monthly request '
+            'limit was reached. Please check back later.'
+        : err is RapidApiException
+            ? err.message
+            : L10n.of(context).unableToFetchRoute;
+    return _message(
+      quota ? Icons.hourglass_bottom_rounded : Icons.cloud_off_rounded,
+      message,
+      quota ? g.statusPurple : g.statusRed,
+    );
+  }
+
+  Widget _message(IconData icon, String text, Color tint) {
+    final g = context.glass;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 120),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 44, color: tint),
+            const SizedBox(height: 14),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: g.textPrimary,
+                fontSize: 14.5,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 5) Report missing train link
+  // ---------------------------------------------------------------------------
+  Widget _reportMissingLink() {
+    final g = context.glass;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              IconActionButton(
-                icon: Icons.arrow_back_ios_new_rounded,
-                iconSize: 18,
-                background: false,
-                onTap: () => Navigator.of(context).maybePop(),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Row(
-                  children: [
-                    Text(from.code, style: AppText.titleStrong.copyWith(color: g.textPrimary)),
-                    const SizedBox(width: 6),
-                    Icon(Icons.arrow_forward_rounded, size: 16, color: g.textMuted),
-                    const SizedBox(width: 6),
-                    Text(to.code, style: AppText.titleStrong.copyWith(color: g.textPrimary)),
-                  ],
+          Text(
+            'Cannot find the train you are looking for?',
+            textAlign: TextAlign.center,
+            style: AppText.label.copyWith(color: g.textMuted, fontSize: 12.5),
+          ),
+          const SizedBox(height: 4),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _reportMissing,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              child: Text(
+                'Report missing train',
+                style: TextStyle(
+                  color: GlassTheme.accentIndigo,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              Text(
-                '$count ${count == 1 ? 'train' : 'trains'}',
-                style: AppText.label.copyWith(color: g.textMuted),
-              ),
-            ],
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6) Sticky bottom bar
+  // ---------------------------------------------------------------------------
+  Widget _bottomBar() {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 12 + bottomInset),
+      child: GlassContainer(
+        radius: 26,
+        blurSigma: 22,
+        strong: true,
+        glow: true,
+        padding: const EdgeInsets.all(8),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // No seat/availability data exists in the current source — see report.
+          onTap: () => _notAvailable(
+            'Seat availability needs a booking data source we don\'t have yet.',
+          ),
+          child: Container(
+            height: 50,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: GlassTheme.accent,
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: [
+                BoxShadow(
+                  color: GlassTheme.accentIndigo.withValues(alpha: 0.40),
+                  blurRadius: 18,
+                  spreadRadius: -3,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.event_seat_rounded,
+                    size: 18, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  'Check seat availability',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -241,28 +598,35 @@ class TrainResultsScreen extends StatelessWidget {
 /// auto-load; the rest fetch on tap.
 const int _kAutoPlatformLookups = 2;
 
-/// One flattened list entry: either a leg header ([train] == null) or a card.
+/// One flattened list entry: either a route band ([train] == null) or a card.
 class _Row {
-  const _Row.header(this.fromName, this.toName)
+  const _Row.header(this.fromCode, this.fromName, this.toCode, this.toName)
       : train = null,
         cardIndex = -1;
   const _Row.card(
     TrainSummary this.train,
+    this.fromCode,
     this.fromName,
+    this.toCode,
     this.toName,
     this.cardIndex,
   );
 
   final TrainSummary? train;
+  final String fromCode;
   final String fromName;
+  final String toCode;
   final String toName;
 
   /// Position among CARDS only (headers excluded), used for the auto-fetch cap.
   final int cardIndex;
 }
 
-/// Flattens results into `[header, card, card, header, card, …]`, preserving the
-/// order RailKit returned (departure time) within each leg.
+/// Flattens results into `[band, card, card, band, card, …]`.
+///
+/// Searching for "SBC" legitimately returns the whole Bengaluru terminal cluster
+/// (SMVB, YPR, KJM) — confirmed in the live payload — so each distinct
+/// origin/destination pair gets its own band instead of being silently merged.
 List<_Row> _groupByLeg(List<TrainSummary> trains) {
   final order = <String>[];
   final byLeg = <String, List<TrainSummary>>{};
@@ -280,67 +644,187 @@ List<_Row> _groupByLeg(List<TrainSummary> trains) {
   for (final key in order) {
     final group = byLeg[key]!;
     final first = group.first;
-    // Only add headers when there's more than one distinct leg — a single-leg
-    // result set already has the pair in the screen header.
-    if (order.length > 1) {
-      rows.add(_Row.header(first.fromName, first.toName));
-    }
+    rows.add(_Row.header(
+      first.fromCode,
+      first.fromName,
+      first.toCode,
+      first.toName,
+    ));
     for (final t in group) {
-      rows.add(_Row.card(t, t.fromName, t.toName, cardIndex++));
+      rows.add(_Row.card(
+        t,
+        t.fromCode,
+        t.fromName,
+        t.toCode,
+        t.toName,
+        cardIndex++,
+      ));
     }
   }
   return rows;
 }
 
-/// Section header: "Kayamkulam Jn  🚆  KSR Bengaluru".
-class _LegHeader extends StatelessWidget {
-  const _LegHeader({required this.fromName, required this.toName});
+/// 3) Route band: `KYJ Kayankulam  →  SBC Ksr Bengaluru`.
+class RouteHeaderBand extends StatelessWidget {
+  const RouteHeaderBand({
+    super.key,
+    required this.fromCode,
+    required this.fromName,
+    required this.toCode,
+    required this.toName,
+  });
 
+  final String fromCode;
   final String fromName;
+  final String toCode;
   final String toName;
 
   @override
   Widget build(BuildContext context) {
     final g = context.glass;
-    final style = AppText.titleStrong.copyWith(
-      color: GlassTheme.accentBlue,
-      fontSize: 14.5,
-      height: 1.25,
-      fontWeight: FontWeight.w700,
-    );
     return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(child: Text(fromName, style: style)),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Icon(Icons.train_rounded,
-                size: 20, color: g.textMuted.withValues(alpha: 0.8)),
+      padding: const EdgeInsets.only(top: 4, bottom: 12),
+      child: GlassContainer(
+        radius: 16,
+        // Nested inside a scrolling list: glass-lite avoids stacking a
+        // BackdropFilter per band.
+        blurSigma: 0,
+        strong: true,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Expanded(child: _end(g, fromCode, fromName, TextAlign.left)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Icon(Icons.arrow_forward_rounded,
+                  size: 16, color: GlassTheme.accentIndigo),
+            ),
+            Expanded(child: _end(g, toCode, toName, TextAlign.right)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _end(GlassTheme g, String code, String name, TextAlign align) {
+    final right = align == TextAlign.right;
+    return Column(
+      crossAxisAlignment:
+          right ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        Text(
+          code,
+          style: AppText.titleStrong.copyWith(
+            color: g.textPrimary,
+            fontSize: 15,
+            height: 1.1,
           ),
-          Expanded(
-            child: Text(toName, style: style, textAlign: TextAlign.right),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: align,
+          style: AppText.label.copyWith(color: g.textMuted, fontSize: 11.5),
+        ),
+      ],
+    );
+  }
+}
+
+/// 2) Pill-shaped filter control.
+class _FilterPill extends StatelessWidget {
+  const _FilterPill({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.active = false,
+    this.unavailable = false,
+    this.trailingChevron = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  /// Filter is doing something (accent tint).
+  final bool active;
+
+  /// No data source behind it — dimmed with an info marker, never a dead
+  /// control that silently does nothing.
+  final bool unavailable;
+
+  final bool trailingChevron;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = context.glass;
+    final tint = active && !unavailable
+        ? GlassTheme.accentIndigo
+        : g.textSecondary;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Opacity(
+        opacity: unavailable ? 0.55 : 1,
+        child: GlassContainer(
+          pill: true,
+          blurSigma: 0,
+          strong: active && !unavailable,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: tint),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active && !unavailable ? g.textPrimary : tint,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (unavailable) ...[
+                const SizedBox(width: 3),
+                Icon(Icons.info_outline_rounded, size: 11, color: tint),
+              ] else if (trailingChevron) ...[
+                const SizedBox(width: 2),
+                Icon(Icons.expand_more_rounded, size: 14, color: tint),
+              ],
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
+/// 4) Result card.
 class _TrainCard extends StatelessWidget {
   const _TrainCard({
     required this.train,
     required this.onTap,
     required this.boardingCode,
+    this.highlightDate,
     this.autoFetchPlatform = false,
   });
+
   final TrainSummary train;
   final VoidCallback onTap;
 
-  /// The FROM station the user picked — the platform we show is the one they
+  /// The FROM station the user picked — the platform shown is the one they
   /// actually board at, not the train's origin.
   final String boardingCode;
+
+  /// Which day the running-days row should mark as selected.
+  final DateTime? highlightDate;
 
   /// Whether to look the platform up immediately (see [_kAutoPlatformLookups]).
   final bool autoFetchPlatform;
@@ -355,7 +839,6 @@ class _TrainCard extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: DecoratedBox(
-          // Soft transparent violet glow radiating around the whole card.
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
@@ -369,71 +852,74 @@ class _TrainCard extends StatelessWidget {
             ],
           ),
           child: GlassSurface(
-          radius: 20,
-          blur: 20,
-          strong: true,
-          glow: true,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 1) Name on the left (wraps to 2 lines), number pill top-right.
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      train.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: g.textPrimary,
-                        fontSize: 15.5,
-                        height: 1.25,
-                        fontWeight: FontWeight.w700,
-                      ),
+            radius: 20,
+            blur: 20,
+            strong: true,
+            glow: true,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Train number badge, left-aligned.
+                Row(
+                  children: [
+                    TrainNumberTag(train.number, fontSize: 13),
+                    const Spacer(),
+                    Text(
+                      train.type,
+                      style: AppText.label
+                          .copyWith(color: g.textMuted, fontSize: 11.5),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Departure → duration → arrival, one row.
+                JourneyDurationBar(
+                  departure: train.departure,
+                  arrival: train.arrival,
+                  duration: train.duration,
+                  arrivalDayOffset: train.arrivalDayOffset,
+                ),
+                const SizedBox(height: 12),
+
+                // Train name below the times.
+                Text(
+                  train.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: g.textPrimary,
+                    fontSize: 15,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(width: 10),
-                  TrainNumberTag(train.number, fontSize: 14),
-                ],
-              ),
-              const SizedBox(height: 14),
+                ),
+                const SizedBox(height: 12),
 
-              // 2) dep — [green dot · duration · red dot] — arr
-              JourneyDurationBar(
-                departure: train.departure,
-                arrival: train.arrival,
-                duration: train.duration,
-                arrivalDayOffset: train.arrivalDayOffset,
-              ),
-              const SizedBox(height: 12),
+                // "Runs Daily", or the S M T W T F S row from RailKit's real
+                // running_days mask.
+                RunningDaysRow(train: train, highlightDate: highlightDate),
+                const SizedBox(height: 12),
 
-              // 3) Real running days (green "Daily" or highlighted weekdays).
-              RunningDaysRow(train: train),
-              const SizedBox(height: 12),
-
-              // Labeled chips: "Platform TBA" + "Live GPS"
-              Row(
-                children: [
-                  _PlatformChip(
-                    trainNumber: train.number,
-                    stationCode: boardingCode,
-                    autoFetch: autoFetchPlatform,
-                  ),
-                  const SizedBox(width: 8),
-                  _chip(g, L10n.of(context).liveGps),
-                ],
-              ),
-            ],
+                Row(
+                  children: [
+                    _PlatformChip(
+                      trainNumber: train.number,
+                      stationCode: boardingCode,
+                      autoFetch: autoFetchPlatform,
+                    ),
+                    const SizedBox(width: 8),
+                    _chipStatic(g, L10n.of(context).liveGps),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
         ),
       ),
     );
   }
-
-  Widget _chip(GlassTheme g, String label) => _chipStatic(g, label);
 
   static Widget _chipStatic(
     GlassTheme g,
@@ -510,7 +996,6 @@ class _PlatformChipState extends ConsumerState<_PlatformChip> {
     final t = L10n.of(context);
 
     if (!_active) {
-      // Deferred: tappable, costs nothing until the user asks.
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
@@ -537,12 +1022,185 @@ class _PlatformChipState extends ConsumerState<_PlatformChip> {
       error: (_, _) => _TrainCard._chipStatic(g, t.platformTba),
       data: (pf) => pf == null
           ? _TrainCard._chipStatic(g, t.platformTba)
-          // Confirmed platform: highlight it, it's the number people need.
           : _TrainCard._chipStatic(
               g,
               t.platformNumber(pf),
               accent: GlassTheme.accentBlue,
             ),
+    );
+  }
+}
+
+// ===========================================================================
+// Date filter bottom sheet
+// ===========================================================================
+
+/// Radio-style date filter, in the established glass sheet pattern (grab handle,
+/// radius 28, blur 24, strong + glow) used by the language picker and the phone
+/// verification sheet.
+Future<_DateFilter?> _showDateFilterSheet(
+  BuildContext context, {
+  required String originName,
+  required _DateFilter current,
+}) {
+  return showModalBottomSheet<_DateFilter>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.black.withValues(alpha: 0.45),
+    isScrollControlled: true,
+    builder: (ctx) => _DateFilterSheet(originName: originName, current: current),
+  );
+}
+
+class _DateFilterSheet extends StatefulWidget {
+  const _DateFilterSheet({required this.originName, required this.current});
+
+  final String originName;
+  final _DateFilter current;
+
+  @override
+  State<_DateFilterSheet> createState() => _DateFilterSheetState();
+}
+
+class _DateFilterSheetState extends State<_DateFilterSheet> {
+  late _DateFilter _selected = widget.current;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = context.glass;
+    final media = MediaQuery.of(context);
+
+    return Padding
+      (padding: EdgeInsets.only(
+        left: 12,
+        right: 12,
+        bottom: 12 + media.viewPadding.bottom,
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: media.size.height * 0.86),
+        child: GlassContainer(
+          radius: 28,
+          blurSigma: 24,
+          strong: true,
+          glow: true,
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: g.textMuted.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Choose the date when the train starts from '
+                '${widget.originName}',
+                style: AppText.titleStrong.copyWith(
+                  color: g.textPrimary,
+                  fontSize: 17,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _option(g, _DateFilter.allDates, 'All Dates'),
+              _option(g, _DateFilter.today, 'Today'),
+              _option(g, _DateFilter.tomorrow, 'Tomorrow'),
+              _option(g, _DateFilter.calendar, 'Choose from Calendar'),
+              const SizedBox(height: 14),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  height: 50,
+                  width: double.infinity,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: g.fill,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: g.border.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: g.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _option(GlassTheme g, _DateFilter value, String label) {
+    final selected = _selected == value;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        Haptics.selection();
+        setState(() => _selected = value);
+        // Single select: choosing an option IS the action.
+        Navigator.of(context).pop(value);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 21,
+              height: 21,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected
+                      ? GlassTheme.accentIndigo
+                      : g.textMuted.withValues(alpha: 0.7),
+                  width: 2,
+                ),
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 11,
+                        height: 11,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: GlassTheme.accent,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: g.textPrimary,
+                  fontSize: 15,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ),
+            if (value == _DateFilter.calendar)
+              Icon(Icons.calendar_month_rounded,
+                  size: 18, color: g.textMuted),
+          ],
+        ),
+      ),
     );
   }
 }

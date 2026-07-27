@@ -1,11 +1,11 @@
 {
-    "name": "my_train",
-    "short_name": "my_train",
+    "name": "My Train — Live train tracking",
+    "short_name": "My Train",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B0C0F",
+    "theme_color": "#6366F1",
+    "description": "Live train running status, PNR and platform info across India, with crowd-verified GPS from fellow passengers.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

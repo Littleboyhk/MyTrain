@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon (Android 8.0+).
+
+  The launcher masks this to whatever shape the device uses (circle, squircle,
+  rounded square) and may parallax the layers, so the two layers are kept
+  separate: a full-bleed gradient background and a foreground whose train mark
+  sits at ~58% of the canvas, inside the safe zone. Legacy square icons for
+  Android 7.1 and below live in the mipmap-*dpi folders as ic_launcher.png.
+
+  Regenerate every size with: tool\generate_app_icon.ps1
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

@@ -57,20 +57,68 @@ class AppTheme {
     );
   }
 
+  /// Bundled Noto Sans faces covering every script the app's 13 locales use.
+  ///
+  /// These are FALLBACKS, never the primary family: the engine walks
+  /// [TextStyle.fontFamily] first (Roboto / .SF), then this list in order, using
+  /// each only for code points the higher-priority font lacks. So Latin text is
+  /// untouched and Indic text stops rendering as tofu.
+  ///
+  /// Why bundle at all: with no font declared, Indic glyphs depend on the
+  /// renderer's own stack — on web that means an on-demand Noto download from
+  /// fonts.gstatic.com at runtime. Core UI text should not depend on a network
+  /// fetch, so the coverage is shipped with the app.
+  ///
+  /// The scripts come from lib/models/app_language.dart: hi+mr share Devanagari
+  /// and bn+as share Bengali, so 13 locales need 9 script faces.
+  static const List<String> indicFontFallback = <String>[
+    'NotoSansDevanagari', // hi, mr
+    'NotoSansMalayalam', // ml
+    'NotoSansTamil', // ta
+    'NotoSansKannada', // kn
+    'NotoSansTelugu', // te
+    'NotoSansBengali', // bn, as
+    'NotoSansGujarati', // gu
+    'NotoSansGurmukhi', // pa
+    'NotoSansOriya', // or
+  ];
+
   static TextTheme _textTheme(TextTheme base, AppPalette p) {
+    // NOTE: these four styles are deliberately rebuilt rather than copyWith'd
+    // (that's pre-existing behaviour — it also drops fontSize), but the family
+    // MUST be carried over. `bodyMedium` is what Material installs as the
+    // ambient DefaultTextStyle, so if its fontFamily were null the fallback list
+    // below would become the primary chain and every Latin glyph in the app
+    // would come from Noto Sans Devanagari instead of Roboto.
+    final String? family = base.bodyMedium?.fontFamily;
+
     return base
         .copyWith(
-          displayLarge: const TextStyle(
+          displayLarge: TextStyle(
+            fontFamily: base.displayLarge?.fontFamily,
             fontWeight: FontWeight.w800,
             letterSpacing: -1.0,
           ),
-          headlineSmall: const TextStyle(fontWeight: FontWeight.w700),
-          titleMedium: const TextStyle(fontWeight: FontWeight.w600),
-          bodyMedium: const TextStyle(fontWeight: FontWeight.w500),
+          headlineSmall: TextStyle(
+            fontFamily: base.headlineSmall?.fontFamily,
+            fontWeight: FontWeight.w700,
+          ),
+          titleMedium: TextStyle(
+            fontFamily: base.titleMedium?.fontFamily,
+            fontWeight: FontWeight.w600,
+          ),
+          bodyMedium: TextStyle(
+            fontFamily: family,
+            fontWeight: FontWeight.w500,
+          ),
         )
         .apply(
           bodyColor: p.textPrimary,
           displayColor: p.textPrimary,
+          // App-wide: every Material text style carries the fallback, and since
+          // inline `TextStyle(...)` widgets inherit from DefaultTextStyle
+          // (= bodyMedium) via merge, they pick it up too.
+          fontFamilyFallback: indicFontFallback,
         );
   }
 }

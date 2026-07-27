@@ -1,7 +1,9 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/chat_gate_controller.dart';
 import '../data/language_controller.dart';
+import '../data/phone_auth_service.dart';
 import '../data/theme_controller.dart';
 import '../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
@@ -12,6 +14,7 @@ import '../widgets/glass_container.dart';
 import '../widgets/icon_action_button.dart';
 import '../widgets/language_picker_sheet.dart';
 import '../widgets/mesh_background.dart';
+import '../widgets/phone_verification_sheet.dart';
 
 /// App settings — focused on appearance (light / dark / system) and language.
 class SettingsScreen extends ConsumerWidget {
@@ -38,6 +41,12 @@ class SettingsScreen extends ConsumerWidget {
               children: [
                 _header(context),
                 const SizedBox(height: 20),
+                // TODO(l10n): these strings need keys in lib/l10n/*.arb like the
+                // rest of this screen; English literals for now.
+                _sectionLabel(context, 'ACCOUNT'),
+                const SizedBox(height: 12),
+                _accountCard(context, ref),
+                const SizedBox(height: 28),
                 _sectionLabel(context, L10n.of(context).sectionAppearance),
                 const SizedBox(height: 12),
                 _themeSelector(context, ref, mode),
@@ -256,6 +265,276 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ),
         ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Account
+  // ---------------------------------------------------------------------------
+
+  /// Sign in / sign out. Driven by [authUserProvider], so the card flips as soon
+  /// as a session appears or disappears — no manual refresh.
+  Widget _accountCard(BuildContext context, WidgetRef ref) {
+    final g = context.glass;
+    final auth = ref.watch(authUserProvider);
+    final configured = ref.read(phoneAuthServiceProvider).isConfigured;
+
+    if (!configured) {
+      return GlassContainer(
+        radius: 22,
+        blurSigma: 20,
+        strong: true,
+        padding: const EdgeInsets.all(6),
+        child: _accountRow(
+          context,
+          icon: Icons.cloud_off_rounded,
+          title: 'Sign-in unavailable',
+          subtitle: 'This build has no backend configured.',
+        ),
+      );
+    }
+
+    // Pattern match rather than `valueOrNull`, which this Riverpod version
+    // doesn't expose on AsyncValue.
+    final user = switch (auth) {
+      AsyncData(:final value) => value,
+      _ => null,
+    };
+    final loading = auth.isLoading;
+
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: Column(
+        children: [
+          if (loading)
+            _accountRow(
+              context,
+              icon: Icons.person_outline_rounded,
+              title: 'Account',
+              subtitle: 'Checking…',
+            )
+          else if (user == null)
+            _accountRow(
+              context,
+              icon: Icons.login_rounded,
+              title: 'Sign in',
+              subtitle: 'Verify your phone to chat with co-passengers',
+              trailing:
+                  Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
+              onTap: () async {
+                Haptics.tap();
+                final ok = await showAccountLoginSheet(context, ref);
+                if (!ok || !context.mounted) return;
+                _toast(context, 'Signed in');
+              },
+            )
+          else ...[
+            _accountRow(
+              context,
+              icon: Icons.verified_user_rounded,
+              title: _maskPhone(user.phone),
+              subtitle: 'Phone verified',
+            ),
+            _divider(context),
+            _accountRow(
+              context,
+              icon: Icons.logout_rounded,
+              title: 'Sign out',
+              subtitle: 'You\'ll need to verify your number again',
+              destructive: true,
+              onTap: () => _signOut(context, ref),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// `+91 ••••• 6217` — enough to recognise the account, not enough to expose
+  /// the number on a shared screen.
+  static String _maskPhone(String? raw) {
+    final digits = (raw ?? '').replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 4) return 'Signed in';
+    final tail = digits.substring(digits.length - 4);
+    return '+91 ••••• $tail';
+  }
+
+  Future<void> _signOut(BuildContext context, WidgetRef ref) async {
+    Haptics.tap();
+    final confirmed = await _confirmSignOut(context);
+    if (confirmed != true || !context.mounted) return;
+
+    // Stop journey verification first: it samples GPS and posts to endpoints
+    // that need a session, so it must not keep running after sign-out.
+    ref.read(chatGateProvider.notifier).stop();
+    await ref.read(phoneAuthServiceProvider).signOut();
+    if (!context.mounted) return;
+    _toast(context, 'Signed out');
+  }
+
+  /// Glass confirm sheet. Both choices are the same size — cancelling is exactly
+  /// as easy as confirming.
+  Future<bool?> _confirmSignOut(BuildContext context) {
+    final g = context.glass;
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 12,
+          right: 12,
+          bottom: 12 + MediaQuery.of(ctx).viewPadding.bottom,
+        ),
+        child: GlassContainer(
+          radius: 28,
+          blurSigma: 24,
+          strong: true,
+          glow: true,
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Sign out?',
+                style: AppText.titleStrong
+                    .copyWith(color: g.textPrimary, fontSize: 19),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Your chat access ends until you verify your number again.',
+                style: AppText.label.copyWith(
+                  color: g.textMuted,
+                  fontSize: 12.5,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: _sheetButton(
+                      context,
+                      label: 'Cancel',
+                      onTap: () => Navigator.of(ctx).pop(false),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _sheetButton(
+                      context,
+                      label: 'Sign out',
+                      destructive: true,
+                      onTap: () => Navigator.of(ctx).pop(true),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetButton(
+    BuildContext context, {
+    required String label,
+    required VoidCallback onTap,
+    bool destructive = false,
+  }) {
+    final g = context.glass;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        height: 50,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: destructive
+              ? g.statusRed.withValues(alpha: 0.16)
+              : g.fill,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: destructive
+                ? g.statusRed.withValues(alpha: 0.5)
+                : g.border.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: destructive ? g.statusRed : g.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _accountRow(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    Widget? trailing,
+    VoidCallback? onTap,
+    bool destructive = false,
+  }) {
+    final g = context.glass;
+    final tint = destructive ? g.statusRed : GlassTheme.accentViolet;
+
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      child: Row(
+        children: [
+          GlassContainer(
+            radius: 12,
+            blurSigma: 0,
+            strong: true,
+            padding: const EdgeInsets.all(8),
+            child: Icon(icon, size: 18, color: tint),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppText.label.copyWith(
+                    color: destructive ? g.statusRed : g.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: AppText.label
+                      .copyWith(color: g.textMuted, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
+    );
+
+    if (onTap == null) return row;
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: row,
       ),
     );
   }

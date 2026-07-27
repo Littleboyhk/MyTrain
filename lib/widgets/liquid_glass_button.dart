@@ -316,10 +316,22 @@ class LiquidGlassButton extends StatefulWidget {
 
 class _LiquidGlassButtonState extends State<LiquidGlassButton>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _glow = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 260),
-  );
+  /// Created on first use, so a button that never animates never allocates a
+  /// ticker.
+  ///
+  /// This is deliberately NOT a `late final` with an inline initializer. The
+  /// bare-icon variant (`filled: false`) returns early from build() without ever
+  /// touching the glow, so a `late` field would still be uninitialised at
+  /// dispose() — and `_glow.dispose()` would then RUN the initializer, calling
+  /// createTicker() on an already-deactivated element:
+  /// "Looking up a deactivated widget's ancestor is unsafe."
+  AnimationController? _glowController;
+
+  AnimationController get _glow =>
+      _glowController ??= AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 260),
+      );
 
   bool _pressed = false;
   Offset _tapLocal = Offset.zero;
@@ -328,7 +340,8 @@ class _LiquidGlassButtonState extends State<LiquidGlassButton>
 
   @override
   void dispose() {
-    _glow.dispose();
+    // Only dispose what was actually created — never force creation here.
+    _glowController?.dispose();
     super.dispose();
   }
 

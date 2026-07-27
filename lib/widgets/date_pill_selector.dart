@@ -14,15 +14,30 @@ class DatePillSelector extends StatefulWidget {
     required this.days,
     required this.selectedIndex,
     required this.onSelected,
+    this.today,
   });
 
   final List<DateTime> days;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
 
+  /// The date to mark as "today". Defaults to [DateTime.now]; injectable so the
+  /// today-marker can be tested deterministically for any current date.
+  final DateTime? today;
+
   static const double pillWidth = 74;
-  static const double pillHeight = 46;
+  // 60: two lines of bold text (46 was clipping the date line once system font
+  // scale reached ~1.15 — the tall Noto fallback metrics made it worse), plus a
+  // reserved slot for the "today" dot marker. Verified by measurement across
+  // scale 1.0/1.15/1.3/2.0.
+  static const double pillHeight = 60;
   static const double gap = 10;
+
+  /// Compact glanceable chips: their text is capped so a very large system font
+  /// can't reopen the clip. The full date is available elsewhere in the app, so
+  /// this bounded scaling doesn't hide information. The rest of the app keeps
+  /// unbounded scaling.
+  static const double _maxTextScale = 1.3;
 
   @override
   State<DatePillSelector> createState() => _DatePillSelectorState();
@@ -60,7 +75,13 @@ class _DatePillSelectorState extends State<DatePillSelector> {
   Widget build(BuildContext context) {
     final totalWidth = widget.days.length * _stride;
 
-    return SizedBox(
+    // Clamp the text scale for the strip only — see _maxTextScale.
+    final mq = MediaQuery.of(context);
+    final clamped = mq.textScaler.clamp(maxScaleFactor: DatePillSelector._maxTextScale);
+
+    return MediaQuery(
+      data: mq.copyWith(textScaler: clamped),
+      child: SizedBox(
       height: DatePillSelector.pillHeight,
       child: SingleChildScrollView(
         controller: _scroll,
@@ -108,11 +129,14 @@ class _DatePillSelectorState extends State<DatePillSelector> {
           ),
         ),
       ),
+      ),
     );
   }
 
   bool _isToday(DateTime d) {
-    final now = DateTime.now();
+    // Local time on purpose: both this and the screen's day list use local
+    // DateTime.now(), so the "today" marker can't drift by a day near midnight.
+    final now = widget.today ?? DateTime.now();
     return d.year == now.year && d.month == now.month && d.day == now.day;
   }
 }
@@ -133,7 +157,10 @@ class _Pill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final g = context.glass;
-    final topLabel = isToday ? 'Today' : Fmt.weekdayShort(day);
+    // ALWAYS the real weekday for this date — never the word "Today", which
+    // used to overwrite it and hide the day name. "Today" is now the dot marker
+    // below, layered on top of the correct label.
+    final topLabel = Fmt.weekdayShort(day);
     final bottomLabel = '${Fmt.monthShort(day)} ${day.day}';
 
     return Padding(
@@ -154,9 +181,13 @@ class _Pill extends StatelessWidget {
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
+                  // Explicit, tight line height: the Noto fallback fonts report
+                  // taller default metrics than Roboto, which inflated the
+                  // two-line stack. Pin it so the pill height is predictable.
+                  height: 1.1,
                   color: selected ? Colors.white : g.textPrimary,
                 ),
-                child: Text(topLabel),
+                child: Text(topLabel, maxLines: 1),
               ),
               const SizedBox(height: 2),
               AnimatedDefaultTextStyle(
@@ -166,11 +197,39 @@ class _Pill extends StatelessWidget {
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
+                  height: 1.1,
                   color: selected
                       ? Colors.white.withValues(alpha: 0.90)
                       : g.textSecondary,
                 ),
-                child: Text(bottomLabel),
+                child: Text(bottomLabel, maxLines: 1),
+              ),
+              // "Today" marker: a small "TODAY" micro-caption, never a
+              // replacement for the weekday above it. A fixed-height slot on
+              // EVERY pill (empty when not today) keeps the weekday/date
+              // baselines aligned across the strip. White on the selected
+              // gradient, accent violet otherwise — so it reads on both states.
+              const SizedBox(height: 3),
+              SizedBox(
+                height: 13,
+                child: isToday
+                    ? Center(
+                        child: Text(
+                          'TODAY',
+                          key: const Key('today_marker'),
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 8.5,
+                            height: 1.0,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                            color: selected
+                                ? Colors.white
+                                : GlassTheme.accentViolet,
+                          ),
+                        ),
+                      )
+                    : null,
               ),
             ],
           ),
