@@ -76,6 +76,14 @@ class AppTheme {
   /// The scripts come from lib/models/app_language.dart: hi+mr share Devanagari
   /// and bn+as share Bengali, so 13 locales need 9 script faces.
   static const List<String> indicFontFallback = <String>[
+    '.SF Pro Display',
+    '.SF Pro Text',
+    'SF Pro Display',
+    'SF Pro Text',
+    '-apple-system',
+    'BlinkMacSystemFont',
+    'San Francisco',
+    'Inter',
     'NotoSansDevanagari', // hi, mr
     'NotoSansMalayalam', // ml
     'NotoSansTamil', // ta
@@ -88,22 +96,18 @@ class AppTheme {
   ];
 
   static TextTheme _textTheme(TextTheme base, AppPalette p, String? fontFamily) {
-    // When the user picks a Google font, resolve the whole base text theme
-    // through it first. `getTextTheme` registers the family and triggers its
-    // (cached, one-time) fetch; when the bytes arrive Flutter re-lays-out text
-    // via PaintingBinding.systemFonts, so no manual rebuild is needed. A null or
-    // unknown family leaves the engine default in place.
-    final TextTheme source = (fontFamily == null)
-        ? base
-        : GoogleFonts.getTextTheme(fontFamily, base);
+    TextTheme source;
+    if (fontFamily == null || fontFamily == 'SF Pro' || fontFamily == 'SF Pro Display') {
+      source = base.apply(fontFamily: 'SF Pro Display');
+    } else {
+      try {
+        source = GoogleFonts.getTextTheme(fontFamily, base);
+      } catch (_) {
+        source = base.apply(fontFamily: 'SF Pro Display');
+      }
+    }
 
-    // NOTE: these four styles are deliberately rebuilt rather than copyWith'd
-    // (that's pre-existing behaviour — it also drops fontSize), but the family
-    // MUST be carried over. `bodyMedium` is what Material installs as the
-    // ambient DefaultTextStyle, so if its fontFamily were null the fallback list
-    // below would become the primary chain and every Latin glyph in the app
-    // would come from Noto Sans Devanagari instead of the chosen face.
-    final String? family = source.bodyMedium?.fontFamily;
+    final String family = source.bodyMedium?.fontFamily ?? 'SF Pro Display';
 
     return source
         .copyWith(
@@ -128,10 +132,6 @@ class AppTheme {
         .apply(
           bodyColor: p.textPrimary,
           displayColor: p.textPrimary,
-          // App-wide: every Material text style carries the fallback, and since
-          // inline `TextStyle(...)` widgets inherit from DefaultTextStyle
-          // (= bodyMedium) via merge, they pick it up too. Preserved under every
-          // font choice so Indic scripts never regress to tofu.
           fontFamilyFallback: indicFontFallback,
         );
   }

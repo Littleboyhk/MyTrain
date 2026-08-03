@@ -43,7 +43,8 @@ enum AlarmTone {
 /// Noto Indic fallbacks stay under every option, so non-Latin scripts never
 /// regress whichever font is chosen.
 enum AppFont {
-  system('Default', null),
+  sfPro('SF Pro', 'SF Pro'),
+  system('Default (System)', null),
   inter('Inter', 'Inter'),
   poppins('Poppins', 'Poppins'),
   lora('Lora', 'Lora'),
@@ -62,7 +63,7 @@ enum AppFont {
     for (final f in AppFont.values) {
       if (f.name == name) return f;
     }
-    return AppFont.system;
+    return AppFont.sfPro;
   }
 }
 
@@ -75,7 +76,7 @@ class AppSettings {
     this.spotNotifications = false,
     this.speedometerEnabled = true,
     this.alarmTone = AlarmTone.classicBell,
-    this.appFont = AppFont.system,
+    this.appFont = AppFont.sfPro,
   });
 
   /// Render clock times as `4:25 PM` rather than `16:25`.
