@@ -510,17 +510,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   _hero(g),
                   const SizedBox(height: 20),
                   _buildSearch(g),
-                  const SizedBox(height: _kSearchGap),
-                  _chipRow(_row1Labels(L10n.of(context)), isRow1: true),
-                  const SizedBox(height: 10),
-                  _chipRow(
-                    [
-                      for (final k in _row2Keys)
-                        _row2Label(L10n.of(context), k),
-                    ],
-                    isRow1: false,
-                    keys: _row2Keys,
-                  ),
+                  if (_mode != _SearchMode.number || _numberQuery.trim().isEmpty) ...[
+                    const SizedBox(height: _kSearchGap),
+                    _chipRow(_row1Labels(L10n.of(context)), isRow1: true),
+                    const SizedBox(height: 10),
+                    _chipRow(
+                      [
+                        for (final k in _row2Keys)
+                          _row2Label(L10n.of(context), k),
+                      ],
+                      isRow1: false,
+                      keys: _row2Keys,
+                    ),
+                  ],
                   if (searched && trains.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     _listHeader(g, trains.length),
