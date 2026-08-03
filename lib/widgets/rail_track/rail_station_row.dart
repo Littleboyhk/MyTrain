@@ -614,27 +614,34 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('Platform ', style: muted),
-          // Number in a small bordered pill.
+          // Number + pencil icon together inside a small bordered pill.
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(5),
+              borderRadius: BorderRadius.circular(6),
               border: Border.all(
                 color: g.textMuted.withValues(alpha: 0.5),
                 width: 1,
               ),
             ),
-            child: Text(
-              platform,
-              style: muted.copyWith(fontWeight: FontWeight.w700),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  platform,
+                  style: muted.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: g.textPrimary,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.edit_outlined,
+                  size: 11,
+                  color: g.textSecondary,
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 4),
-          // Pencil edit icon.
-          Icon(
-            Icons.edit_rounded,
-            size: 13,
-            color: g.textMuted,
           ),
         ],
       ),
