@@ -79,10 +79,12 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       );
 
   String get _journeyDate {
-    final n = DateTime.now();
-    return '${n.year.toString().padLeft(4, '0')}-'
-        '${n.month.toString().padLeft(2, '0')}-'
-        '${n.day.toString().padLeft(2, '0')}';
+    final d = (_selectedDay >= 0 && _selectedDay < _days.length)
+        ? _days[_selectedDay]
+        : DateTime.now();
+    return '${d.year.toString().padLeft(4, '0')}-'
+        '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
   }
 
   TrainKey get _trainKey => (number: _trainNumber, date: _journeyDate);
@@ -95,7 +97,6 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       base,
       base.add(const Duration(days: 1)),
       base.add(const Duration(days: 2)),
-      base.add(const Duration(days: 3)),
     ];
   }
 
@@ -365,12 +366,34 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       days: _days,
       selectedDay: _selectedDay,
       onSelectDay: (i) => setState(() => _selectedDay = i),
+      onCustomDateSelected: _onCustomDateSelected,
       onBack: () => Navigator.of(context).maybePop(),
       onAlarm: () => _onAlarm(state),
       onCoach: _onCoach,
       onShare: _onShare,
       onToggleSignal: controller.reacquire,
     );
+  }
+
+  void _onCustomDateSelected(DateTime picked) {
+    final pickedDate = DateTime(picked.year, picked.month, picked.day);
+    int idx = -1;
+    for (int i = 0; i < _days.length; i++) {
+      final d = _days[i];
+      if (d.year == pickedDate.year && d.month == pickedDate.month && d.day == pickedDate.day) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx != -1) {
+      setState(() => _selectedDay = idx);
+    } else {
+      setState(() {
+        _days.add(pickedDate);
+        _days.sort((a, b) => a.compareTo(b));
+        _selectedDay = _days.indexOf(pickedDate);
+      });
+    }
   }
 
   List<Widget> _bodySlivers(

@@ -81,7 +81,8 @@ class _DatePillSelectorState extends State<DatePillSelector> {
 
   @override
   Widget build(BuildContext context) {
-    final totalWidth = widget.days.length * _stride;
+    final totalCount = widget.days.length + 1;
+    final totalWidth = totalCount * _stride;
 
     // Clamp the text scale for the strip only — see _maxTextScale.
     final mq = MediaQuery.of(context);
@@ -131,6 +132,15 @@ class _DatePillSelectorState extends State<DatePillSelector> {
                       isToday: _isToday(widget.days[i]),
                       onTap: () => _select(i),
                     ),
+                  _CalendarPill(
+                    selected: widget.selectedIndex >= widget.days.length,
+                    onTap: () {
+                      if (widget.onOpenDialog != null) {
+                        Haptics.tap();
+                        widget.onOpenDialog!();
+                      }
+                    },
+                  ),
                 ],
               ),
             ],
@@ -238,6 +248,57 @@ class _Pill extends StatelessWidget {
                         ),
                       )
                     : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarPill extends StatelessWidget {
+  const _CalendarPill({
+    required this.selected,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = context.glass;
+    return Padding(
+      padding: const EdgeInsets.only(right: DatePillSelector.gap),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          width: DatePillSelector.pillWidth,
+          height: DatePillSelector.pillHeight,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.calendar_today_rounded,
+                size: 16,
+                color: selected ? Colors.white : g.textPrimary,
+              ),
+              const SizedBox(height: 3),
+              AnimatedDefaultTextStyle(
+                duration: Motion.pillSlide,
+                curve: Motion.emphasized,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                  height: 1.1,
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.90)
+                      : g.textMuted,
+                ),
+                child: const Text('Calendar', maxLines: 1),
               ),
             ],
           ),

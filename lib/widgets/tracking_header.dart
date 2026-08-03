@@ -21,6 +21,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.days,
     required this.selectedDay,
     required this.onSelectDay,
+    this.onCustomDateSelected,
     required this.onBack,
     required this.onAlarm,
     required this.onCoach,
@@ -37,6 +38,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   final List<DateTime> days;
   final int selectedDay;
   final ValueChanged<int> onSelectDay;
+  final ValueChanged<DateTime>? onCustomDateSelected;
   final VoidCallback onBack;
   final VoidCallback onAlarm;
   final VoidCallback onCoach;
@@ -213,6 +215,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
                 days: days,
                 selectedIndex: selectedDay,
                 onSelected: onSelectDay,
+                onCustomDateSelected: onCustomDateSelected,
               );
             },
           ),
