@@ -97,17 +97,19 @@ class AppTheme {
 
   static TextTheme _textTheme(TextTheme base, AppPalette p, String? fontFamily) {
     TextTheme source;
-    if (fontFamily == null || fontFamily == 'SF Pro' || fontFamily == 'SF Pro Display') {
+    if (fontFamily == null) {
+      source = base;
+    } else if (fontFamily == 'SF Pro' || fontFamily == 'SF Pro Display') {
       source = base.apply(fontFamily: 'SF Pro Display');
     } else {
       try {
         source = GoogleFonts.getTextTheme(fontFamily, base);
       } catch (_) {
-        source = base.apply(fontFamily: 'SF Pro Display');
+        source = base;
       }
     }
 
-    final String family = source.bodyMedium?.fontFamily ?? 'SF Pro Display';
+    final String? family = source.bodyMedium?.fontFamily;
 
     return source
         .copyWith(
