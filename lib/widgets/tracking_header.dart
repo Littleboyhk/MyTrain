@@ -53,7 +53,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   static const double _extras = 124;
 
   @override
-  double get minExtent => topPadding + _compactBar;
+  double get minExtent => topPadding + _compactBar + _extras;
 
   @override
   double get maxExtent => topPadding + _compactBar + _extras;
@@ -64,24 +64,18 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
     double shrinkOffset,
     bool overlapsContent,
   ) {
-    final range = maxExtent - minExtent;
-    final t = range <= 0 ? 0.0 : (shrinkOffset / range).clamp(0.0, 1.0);
     final g = context.glass;
 
     return Container(
       decoration: BoxDecoration(
-        color: Color.lerp(
-          Colors.transparent,
-          g.isDark ? Colors.black.withValues(alpha: 0.9) : Colors.white.withValues(alpha: 0.9),
-          t,
-        ),
-        boxShadow: t > 0.02
-            ? AppColors.floatingShadow(opacity: 0.20 * t, blur: 20, y: 8)
-            : null,
+        color: g.isDark
+            ? Colors.black.withValues(alpha: 0.95)
+            : Colors.white.withValues(alpha: 0.95),
+        boxShadow: AppColors.floatingShadow(opacity: 0.20, blur: 16, y: 4),
         border: Border(
           bottom: BorderSide(
-            color: g.border.withValues(alpha: t * 0.15),
-            width: t > 0 ? 1 : 0,
+            color: g.border.withValues(alpha: 0.15),
+            width: 1,
           ),
         ),
       ),
@@ -92,25 +86,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
           // less than minExtent, instead of overflowing.
           Flexible(fit: FlexFit.loose, child: _buildCompactBar(context)),
           Expanded(
-            child: OverflowBox(
-              // OverflowBox lets the extras keep their natural height while the
-              // available space shrinks during collapse. With a plain Align the
-              // inner Column got a smaller height than its content and threw
-              // "RenderFlex overflowed by N pixels" on every scroll frame.
-              //
-              // No ClipRect needed: the Opacity fades content to 0 by t≈0.45,
-              // well before any overflow becomes visible during collapse.
-              alignment: Alignment.topCenter,
-              minHeight: 0,
-              maxHeight: _extras,
-              child: Opacity(
-                opacity: (1 - t * 2.2).clamp(0.0, 1.0),
-                child: Transform.translate(
-                  offset: Offset(0, -10 * t),
-                  child: _buildExtras(context),
-                ),
-              ),
-            ),
+            child: _buildExtras(context),
           ),
         ],
       ),
