@@ -48,10 +48,8 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   // 56 not 58: the sliver can hand back a fraction less than minExtent while
   // pinning, and a fixed 58 overflowed the Column by 1px on web.
   static const double _compactBar = 56;
-  // 160: the date pills are 60px tall (two lines of bold text at enlarged system
-  // font sizes, plus a reserved slot for the "today" dot). Content is 42 (icon
-  // row) + 10 (gap) + 60 (pills) = 112, leaving comfortable slack.
-  static const double _extras = 160;
+  // 108: icon row (42) + gap (8) + date pills (56) = 106, leaving 2px crisp margin.
+  static const double _extras = 108;
 
   @override
   double get minExtent => topPadding + _compactBar;
@@ -203,7 +201,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           DatePillSelector(
             days: days,
             selectedIndex: selectedDay,

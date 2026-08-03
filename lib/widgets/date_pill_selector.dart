@@ -93,7 +93,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
     return MediaQuery(
       data: mq.copyWith(textScaler: clamped),
       child: SizedBox(
-      height: DatePillSelector.pillHeight + 20,
+      height: DatePillSelector.pillHeight + 8,
       child: SingleChildScrollView(
         controller: _scroll,
         scrollDirection: Axis.horizontal,
@@ -101,7 +101,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: SizedBox(
           width: totalWidth,
-          height: DatePillSelector.pillHeight + 12,
+          height: DatePillSelector.pillHeight + 8,
           child: Stack(
             children: [
               // Sliding active background.
