@@ -13,6 +13,7 @@ import '../../theme/motion.dart';
 import '../../utils/formatters.dart';
 import '../../utils/haptics.dart';
 import '../glass_container.dart';
+import '../platform_vote_dialog.dart';
 import 'rail_track_layout.dart';
 import 'rail_track_painter.dart';
 import 'train_marker.dart';
@@ -539,7 +540,7 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
       children: [
         Text('${Fmt.km(_s.distanceFromOriginKm)} km', style: muted),
         if (!_s.isPassThrough && platform != null)
-          Text('Platform $platform', style: muted),
+          _platformWithEdit(context, platform, muted),
         if (_isGapOrLocal)
           Text(
             'Passes',
@@ -587,6 +588,57 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
     final p = _s.platform.trim();
     if (p.isEmpty || p == '0' || p == '—') return null;
     return p;
+  }
+
+  /// Platform label with bordered number pill and edit pencil icon.
+  /// Tapping opens the crowdsource "Is Platform X correct?" dialog.
+  Widget _platformWithEdit(
+    BuildContext context,
+    String platform,
+    TextStyle muted,
+  ) {
+    final g = context.glass;
+
+    return GestureDetector(
+      onTap: () {
+        Haptics.tap();
+        showPlatformVoteDialog(
+          context: context,
+          ref: ref,
+          trainNumber: widget.trainNumber,
+          stationCode: _s.code,
+          platform: platform,
+        );
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Platform ', style: muted),
+          // Number in a small bordered pill.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: g.textMuted.withValues(alpha: 0.5),
+                width: 1,
+              ),
+            ),
+            child: Text(
+              platform,
+              style: muted.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Pencil edit icon.
+          Icon(
+            Icons.edit_rounded,
+            size: 13,
+            color: g.textMuted,
+          ),
+        ],
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
