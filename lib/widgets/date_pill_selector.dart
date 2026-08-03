@@ -199,8 +199,9 @@ class _Pill extends StatelessWidget {
           width: DatePillSelector.pillWidth,
           height: DatePillSelector.pillHeight,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.start,
             children: [
+              const SizedBox(height: 7),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
@@ -279,8 +280,9 @@ class _CalendarPill extends StatelessWidget {
           width: DatePillSelector.pillWidth,
           height: DatePillSelector.pillHeight,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.start,
             children: [
+              const SizedBox(height: 7),
               Icon(
                 Icons.calendar_month_rounded,
                 size: 16,
