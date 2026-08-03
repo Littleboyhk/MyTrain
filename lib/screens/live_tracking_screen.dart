@@ -683,114 +683,32 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
 /// second, and watching it here keeps those rebuilds inside the gauge instead of
 /// re-running the whole tracking screen — which would rebuild the entire track
 /// timeline once a second.
-class _SpeedometerOverlay extends ConsumerStatefulWidget {
+class _SpeedometerOverlay extends ConsumerWidget {
   const _SpeedometerOverlay();
 
   @override
-  ConsumerState<_SpeedometerOverlay> createState() => _SpeedometerOverlayState();
-}
-
-class _SpeedometerOverlayState extends ConsumerState<_SpeedometerOverlay> {
-  bool _demoActive = false;
-  double _demoKmh = 0;
-  Timer? _demoTimer;
-  int _step = 0;
-
-  static const _demoSpeeds = [
-    0.0, 18.0, 42.0, 68.0, 92.0, 115.0, 128.0, 134.0, 130.0, 118.0, 96.0, 72.0, 45.0, 20.0, 0.0
-  ];
-
-  void _toggleDemo() {
-    Haptics.selection();
-    if (_demoActive) {
-      _demoTimer?.cancel();
-      setState(() {
-        _demoActive = false;
-        _demoKmh = 0;
-      });
-    } else {
-      setState(() {
-        _demoActive = true;
-        _step = 0;
-        _demoKmh = _demoSpeeds[0];
-      });
-      _demoTimer?.cancel();
-      _demoTimer = Timer.periodic(const Duration(milliseconds: 550), (t) {
-        if (!mounted) return;
-        setState(() {
-          _step = (_step + 1) % _demoSpeeds.length;
-          _demoKmh = _demoSpeeds[_step];
-        });
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _demoTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(speedStreamProvider);
 
     final sample = switch (async) {
       AsyncData(:final value) => value,
       _ => null,
     };
-    final stale = !_demoActive &&
-        (async.hasError ||
-            (sample != null &&
-                DateTime.now().difference(sample.at) >
-                    const Duration(seconds: 12)));
+    final stale = async.hasError ||
+        (sample != null &&
+            DateTime.now().difference(sample.at) >
+                const Duration(seconds: 12));
 
-    final displayKmh = _demoActive ? _demoKmh : (sample?.kmh ?? 0.0);
-
-    return GestureDetector(
-      onTap: _toggleDemo,
-      child: GlassContainer(
-        radius: 18,
-        blurSigma: 18,
-        strong: true,
-        glow: true,
-        padding: const EdgeInsets.all(6),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            SpeedometerGauge(
-              size: 94,
-              kmh: displayKmh,
-              stale: stale,
-              label: _demoActive ? 'DEMO TEST' : 'GPS SPEED',
-            ),
-            Positioned(
-              top: 2,
-              right: 2,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _demoActive
-                      ? const Color(0xFF10B981).withValues(alpha: 0.3)
-                      : GlassTheme.accentViolet.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: _demoActive ? const Color(0xFF10B981) : GlassTheme.accentViolet,
-                    width: 0.8,
-                  ),
-                ),
-                child: Text(
-                  _demoActive ? 'TEST ▶' : 'DEMO',
-                  style: TextStyle(
-                    color: _demoActive ? const Color(0xFF10B981) : GlassTheme.accentViolet,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+    return GlassContainer(
+      radius: 18,
+      blurSigma: 18,
+      strong: true,
+      glow: true,
+      padding: const EdgeInsets.all(6),
+      child: SpeedometerGauge(
+        size: 94,
+        kmh: sample?.kmh,
+        stale: stale,
       ),
     );
   }
