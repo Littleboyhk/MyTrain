@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
-import '../utils/haptics.dart';
 import 'date_pill_selector.dart';
 import 'icon_action_button.dart';
 import 'live_badge.dart';
@@ -202,89 +201,24 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
               ],
             ),
           ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    Haptics.tap();
-                    showStartDatePickerDialog(
-                      context: context,
-                      originName: originName,
-                      days: days,
-                      selectedIndex: selectedDay,
-                      onSelected: onSelectDay,
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: GlassTheme.accentViolet.withValues(alpha: 0.22),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: GlassTheme.accentViolet.withValues(alpha: 0.45),
-                        width: 0.8,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _selectedDayLabel(days, selectedDay),
-                          style: TextStyle(
-                            color: context.glass.textPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(width: 3),
-                        Icon(
-                          Icons.arrow_drop_down_rounded,
-                          size: 18,
-                          color: context.glass.textPrimary,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DatePillSelector(
-                    days: days,
-                    selectedIndex: selectedDay,
-                    onSelected: onSelectDay,
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 14),
+          DatePillSelector(
+            days: days,
+            selectedIndex: selectedDay,
+            onSelected: onSelectDay,
+            onOpenDialog: () {
+              showStartDatePickerDialog(
+                context: context,
+                originName: originName,
+                days: days,
+                selectedIndex: selectedDay,
+                onSelected: onSelectDay,
+              );
+            },
           ),
         ],
       ),
     );
-  }
-
-  String _selectedDayLabel(List<DateTime> daysList, int index) {
-    if (daysList.isEmpty || index < 0 || index >= daysList.length) return 'Select Date';
-    final date = daysList[index];
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final diff = date.difference(today).inDays;
-    final dayName = _dayAbbrev(date.weekday);
-    final dayNum = date.day.toString().padLeft(2, '0');
-    final tag = '$dayName $dayNum';
-
-    if (diff == -2) return 'Day Before Yesterday ($tag)';
-    if (diff == -1) return 'Yesterday ($tag)';
-    if (diff == 0) return 'Today ($tag)';
-    if (diff == 1) return 'Tomorrow ($tag)';
-    return '$dayName $dayNum';
-  }
-
-  String _dayAbbrev(int weekday) {
-    const daysAbbr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    return daysAbbr[(weekday - 1) % 7];
   }
 
   Widget _routeSummary(BuildContext context) {
