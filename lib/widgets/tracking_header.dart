@@ -51,7 +51,7 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   // 134: the date pills are 60px tall (two lines of bold text at enlarged system
   // font sizes, plus a reserved slot for the "today" dot). Content is 42 (icon
   // row) + 14 (gap) + 60 (pills) = 116, leaving comfortable slack.
-  static const double _extras = 134;
+  static const double _extras = 144;
 
   @override
   double get minExtent => topPadding + _compactBar;
