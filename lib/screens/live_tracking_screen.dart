@@ -36,6 +36,7 @@ import '../widgets/tracking_header.dart';
 import '../widgets/train_refresh_indicator.dart';
 import '../data/offline/dead_reckoning_service.dart';
 import '../widgets/destination_alarm_dialog.dart';
+import '../widgets/location_alarm_sheet.dart';
 import '../widgets/journey_chat_sheet.dart';
 import '../widgets/next_mile_transit_card.dart';
 import 'coach_position_screen.dart';
@@ -555,47 +556,12 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   void _onAlarm(TrackingState state) {
     Haptics.tap();
     if (state is! TrackingReady) return;
-    final dest = state.journey.destination;
-    final alarmData = ref.read(destinationAlarmProvider);
-    final isArmed = alarmData.state == DestinationAlarmState.armed &&
-        alarmData.stationCode == dest.code;
-
-    if (isArmed) {
-      _showSheet(
-        context,
-        title: 'Destination Alarm Active',
-        body: 'Alarm is currently active for 10 km before reaching ${dest.name} (${dest.code}).',
-        action: 'Turn Off Alarm',
-        onAction: () {
-          ref.read(destinationAlarmProvider.notifier).reset();
-          _toast(Icons.alarm_off_rounded, 'Destination alarm turned off');
-        },
-      );
-    } else {
-      _showSheet(
-        context,
-        title: L10n.of(context).destinationAlarm,
-        body: 'Get a wake-up alert 10 km before reaching ${dest.name} (${dest.code}).',
-        action: L10n.of(context).setAlarm,
-        onAction: () {
-          ref.read(destinationAlarmProvider.notifier).armAlarm(
-                stationCode: dest.code,
-                stationName: dest.name,
-                latitude: dest.location?.latitude,
-                longitude: dest.location?.longitude,
-                proximityThresholdKm: 10.0,
-              );
-          _toast(Icons.alarm_on_rounded, 'Alarm set for 10 km before ${dest.name}');
-          Future.delayed(const Duration(milliseconds: 3500), () {
-            if (mounted &&
-                ref.read(destinationAlarmProvider).state ==
-                    DestinationAlarmState.armed) {
-              ref.read(destinationAlarmProvider.notifier).triggerRinging();
-            }
-          });
-        },
-      );
-    }
+    showLocationAlarmSheet(
+      context: context,
+      ref: ref,
+      stations: state.journey.stations,
+      defaultStation: state.journey.destination,
+    );
   }
 
   /// Opens the real coach-sequence screen.
@@ -648,36 +614,6 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           mode: CrowdMode.gps,
         );
     _toast(Icons.sensors_rounded, 'Sharing location with fellow passengers');
-  }
-
-  void _showSheet(
-    BuildContext context, {
-    required String title,
-    required String body,
-    required String action,
-    required VoidCallback onAction,
-  }) {
-    showCupertinoModalPopup<void>(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: Text(title),
-        message: Text(body),
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              onAction();
-            },
-            child: Text(action),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          isDefaultAction: true,
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('Close'),
-        ),
-      ),
-    );
   }
 
   void _toast(IconData icon, String msg) {

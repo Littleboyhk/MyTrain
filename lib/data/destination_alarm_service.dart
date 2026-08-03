@@ -17,6 +17,7 @@ class DestinationAlarmData {
     this.latitude,
     this.longitude,
     this.proximityThresholdKm = 10.0,
+    this.minutesBefore = 10,
     this.distanceKm,
   });
 
@@ -26,7 +27,13 @@ class DestinationAlarmData {
   final double? latitude;
   final double? longitude;
   final double proximityThresholdKm;
+  final int minutesBefore;
   final double? distanceKm;
+
+  String get formattedWhenText {
+    if (minutesBefore <= 0) return 'At';
+    return '$minutesBefore minutes before';
+  }
 
   DestinationAlarmData copyWith({
     DestinationAlarmState? state,
@@ -35,6 +42,7 @@ class DestinationAlarmData {
     double? latitude,
     double? longitude,
     double? proximityThresholdKm,
+    int? minutesBefore,
     double? distanceKm,
   }) {
     return DestinationAlarmData(
@@ -45,6 +53,7 @@ class DestinationAlarmData {
       longitude: longitude ?? this.longitude,
       proximityThresholdKm:
           proximityThresholdKm ?? this.proximityThresholdKm,
+      minutesBefore: minutesBefore ?? this.minutesBefore,
       distanceKm: distanceKm ?? this.distanceKm,
     );
   }
@@ -68,6 +77,7 @@ class DestinationAlarmNotifier extends Notifier<DestinationAlarmData> {
     double? latitude,
     double? longitude,
     double proximityThresholdKm = 10.0,
+    int minutesBefore = 10,
   }) {
     Haptics.selection();
     state = DestinationAlarmData(
@@ -77,9 +87,10 @@ class DestinationAlarmNotifier extends Notifier<DestinationAlarmData> {
       latitude: latitude,
       longitude: longitude,
       proximityThresholdKm: proximityThresholdKm,
+      minutesBefore: minutesBefore,
       distanceKm: null,
     );
-    debugPrint('[DestinationAlarm] Armed for $stationName ($stationCode)');
+    debugPrint('[DestinationAlarm] Armed for $stationName ($stationCode) at $minutesBefore mins before');
   }
 
   /// Update location coordinates & calculate distance to target station.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/destination_alarm_service.dart';
 import '../../data/station_culinary_service.dart';
 import '../../data/train_platform_provider.dart';
 import '../../models/station.dart';
@@ -103,6 +104,12 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
   bool get _isCurrent => widget.item.progress == StationProgress.current;
   bool get _isPassed => widget.item.progress == StationProgress.passed;
   bool get _isGapOrLocal => _s.isPassThrough;
+
+  bool get _hasActiveAlarm {
+    final alarm = ref.watch(destinationAlarmProvider);
+    return alarm.state == DestinationAlarmState.armed &&
+        alarm.stationCode == _s.code;
+  }
 
   /// True when this station owns a collapsed run of local stops.
   bool get _hasLocals => widget.hiddenAfterCount > 0;
@@ -256,6 +263,36 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
               child: TrainMarker(
                 stationName: widget.markerStationName,
                 arrived: widget.markerArrived,
+              ),
+            ),
+          ),
+        if (_hasActiveAlarm)
+          Positioned(
+            left: -8,
+            right: -8,
+            top: (_isGapOrLocal ? 14.0 : RailMetrics.pipCenterY) - 14,
+            height: 28,
+            child: Center(
+              child: Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0284C7),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF0284C7).withValues(alpha: 0.50),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.notifications_active_rounded,
+                  size: 13,
+                  color: Colors.white,
+                ),
               ),
             ),
           ),
@@ -540,6 +577,57 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
         ),
         SizedBox(height: _isGapOrLocal ? 1 : 5),
         _subtitle(context),
+        if (widget.item.isFirst) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Find your way to the station',
+            style: AppText.label.copyWith(
+              color: g.textSecondary,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: g.isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: g.border.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 18,
+                  height: 18,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEA4335),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.location_on,
+                    size: 12,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Get directions',
+                  style: TextStyle(
+                    color: Color(0xFF60A5FA),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         AnimatedSize(
           duration: Motion.expand,
           curve: Motion.emphasized,
