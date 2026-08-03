@@ -218,6 +218,42 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
                 onCustomDateSelected: onCustomDateSelected,
               );
             },
+            onCalendarTap: () async {
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+              final firstAllowedDate = today.subtract(const Duration(days: 93));
+              final lastAllowedDate = today.add(const Duration(days: 7));
+              final initial = days.isNotEmpty && selectedDay >= 0 && selectedDay < days.length
+                  ? days[selectedDay]
+                  : today;
+              final initialClamped = initial.isBefore(firstAllowedDate)
+                  ? firstAllowedDate
+                  : (initial.isAfter(lastAllowedDate) ? lastAllowedDate : initial);
+
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: initialClamped,
+                firstDate: firstAllowedDate,
+                lastDate: lastAllowedDate,
+              );
+              if (picked != null) {
+                final pickedOnly = DateTime(picked.year, picked.month, picked.day);
+                if (onCustomDateSelected != null) {
+                  onCustomDateSelected!(pickedOnly);
+                } else {
+                  int bestIdx = 0;
+                  int minDiff = 999999;
+                  for (int i = 0; i < days.length; i++) {
+                    final diff = (days[i].difference(pickedOnly).inDays).abs();
+                    if (diff < minDiff) {
+                      minDiff = diff;
+                      bestIdx = i;
+                    }
+                  }
+                  onSelectDay(bestIdx);
+                }
+              }
+            },
           ),
         ],
       ),

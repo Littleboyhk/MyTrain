@@ -15,6 +15,7 @@ class DatePillSelector extends StatefulWidget {
     required this.selectedIndex,
     required this.onSelected,
     this.onOpenDialog,
+    this.onCalendarTap,
     this.today,
   });
 
@@ -22,6 +23,7 @@ class DatePillSelector extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final VoidCallback? onOpenDialog;
+  final VoidCallback? onCalendarTap;
 
   /// The date to mark as "today". Defaults to [DateTime.now]; injectable so the
   /// today-marker can be tested deterministically for any current date.
@@ -135,7 +137,10 @@ class _DatePillSelectorState extends State<DatePillSelector> {
                   _CalendarPill(
                     selected: widget.selectedIndex >= widget.days.length,
                     onTap: () {
-                      if (widget.onOpenDialog != null) {
+                      if (widget.onCalendarTap != null) {
+                        Haptics.tap();
+                        widget.onCalendarTap!();
+                      } else if (widget.onOpenDialog != null) {
                         Haptics.tap();
                         widget.onOpenDialog!();
                       }
