@@ -683,11 +683,25 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
 /// second, and watching it here keeps those rebuilds inside the gauge instead of
 /// re-running the whole tracking screen — which would rebuild the entire track
 /// timeline once a second.
-class _SpeedometerOverlay extends ConsumerWidget {
+class _SpeedometerOverlay extends ConsumerStatefulWidget {
   const _SpeedometerOverlay();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SpeedometerOverlay> createState() => _SpeedometerOverlayState();
+}
+
+class _SpeedometerOverlayState extends ConsumerState<_SpeedometerOverlay> {
+  bool _isHidden = false;
+
+  void _toggleHidden() {
+    Haptics.selection();
+    setState(() {
+      _isHidden = !_isHidden;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final async = ref.watch(speedStreamProvider);
 
     final sample = switch (async) {
@@ -699,17 +713,90 @@ class _SpeedometerOverlay extends ConsumerWidget {
             DateTime.now().difference(sample.at) >
                 const Duration(seconds: 12));
 
-    return GlassContainer(
-      radius: 18,
-      blurSigma: 18,
-      strong: true,
-      glow: true,
-      padding: const EdgeInsets.all(6),
-      child: SpeedometerGauge(
-        size: 94,
-        kmh: sample?.kmh,
-        stale: stale,
-      ),
+    final kmhText = sample?.kmh != null ? '${sample!.kmh.round()} km/h' : '0 km/h';
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: _isHidden
+          ? GestureDetector(
+              key: const ValueKey('speedometer_hidden'),
+              onTap: _toggleHidden,
+              child: GlassContainer(
+                radius: 16,
+                blurSigma: 18,
+                strong: true,
+                glow: true,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.speed_rounded,
+                      size: 14,
+                      color: GlassTheme.railAmber,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      kmhText,
+                      style: TextStyle(
+                        color: context.glass.textPrimary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.unfold_more_rounded,
+                      size: 13,
+                      color: context.glass.textMuted,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : Stack(
+              key: const ValueKey('speedometer_visible'),
+              clipBehavior: Clip.none,
+              children: [
+                GlassContainer(
+                  radius: 18,
+                  blurSigma: 18,
+                  strong: true,
+                  glow: true,
+                  padding: const EdgeInsets.all(6),
+                  child: SpeedometerGauge(
+                    size: 94,
+                    kmh: sample?.kmh,
+                    stale: stale,
+                  ),
+                ),
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: GestureDetector(
+                    onTap: _toggleHidden,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: context.glass.textMuted.withValues(alpha: 0.4),
+                          width: 1,
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 12,
+                        color: context.glass.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
