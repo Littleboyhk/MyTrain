@@ -286,25 +286,27 @@ class _CalendarPill extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                Icons.calendar_today_rounded,
-                size: 16,
+                Icons.calendar_month_rounded,
+                size: 18,
                 color: selected ? Colors.white : g.textPrimary,
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 2),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 0.2,
-                  height: 1.1,
+                  letterSpacing: 0.1,
+                  height: 1.0,
                   color: selected
-                      ? Colors.white.withValues(alpha: 0.90)
-                      : g.textMuted,
+                      ? Colors.white.withValues(alpha: 0.92)
+                      : g.textPrimary,
                 ),
                 child: const Text('Calendar', maxLines: 1),
               ),
+              const SizedBox(height: 3),
+              const SizedBox(height: 13),
             ],
           ),
         ),
