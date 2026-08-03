@@ -34,7 +34,7 @@ class DatePillSelector extends StatefulWidget {
   // scale reached ~1.15 — the tall Noto fallback metrics made it worse), plus a
   // reserved slot for the "today" dot marker. Verified by measurement across
   // scale 1.0/1.15/1.3/2.0.
-  static const double pillHeight = 60;
+  static const double pillHeight = 54;
   static const double gap = 10;
 
   /// Compact glanceable chips: their text is capped so a very large system font
@@ -93,7 +93,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
     return MediaQuery(
       data: mq.copyWith(textScaler: clamped),
       child: SizedBox(
-      height: DatePillSelector.pillHeight,
+      height: DatePillSelector.pillHeight + 8,
       child: SingleChildScrollView(
         controller: _scroll,
         scrollDirection: Axis.horizontal,
@@ -110,7 +110,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
                 left: widget.selectedIndex * _stride,
                 top: 4,
                 width: DatePillSelector.pillWidth,
-                height: DatePillSelector.pillHeight - 8,
+                height: DatePillSelector.pillHeight,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: GlassTheme.accent,
