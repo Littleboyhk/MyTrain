@@ -48,8 +48,9 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   // 56 not 58: the sliver can hand back a fraction less than minExtent while
   // pinning, and a fixed 58 overflowed the Column by 1px on web.
   static const double _compactBar = 56;
-  // 116: icon row (42) + gap (8) + date pills (58) = 108, leaving 8px bottom slack.
-  static const double _extras = 116;
+  // 124: icon row (42) + gap (8) + date pills (58) = 108, leaving 16px for
+  // the pill's bottom border-radius (14px) and box-shadow to render fully.
+  static const double _extras = 124;
 
   @override
   double get minExtent => topPadding + _compactBar;
@@ -91,21 +92,22 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
           // less than minExtent, instead of overflowing.
           Flexible(fit: FlexFit.loose, child: _buildCompactBar(context)),
           Expanded(
-            child: ClipRect(
+            child: OverflowBox(
               // OverflowBox lets the extras keep their natural height while the
               // available space shrinks during collapse. With a plain Align the
               // inner Column got a smaller height than its content and threw
               // "RenderFlex overflowed by N pixels" on every scroll frame.
-              child: OverflowBox(
-                alignment: Alignment.topCenter,
-                minHeight: 0,
-                maxHeight: _extras,
-                child: Opacity(
-                  opacity: (1 - t * 2.2).clamp(0.0, 1.0),
-                  child: Transform.translate(
-                    offset: Offset(0, -10 * t),
-                    child: _buildExtras(context),
-                  ),
+              //
+              // No ClipRect needed: the Opacity fades content to 0 by t≈0.45,
+              // well before any overflow becomes visible during collapse.
+              alignment: Alignment.topCenter,
+              minHeight: 0,
+              maxHeight: _extras,
+              child: Opacity(
+                opacity: (1 - t * 2.2).clamp(0.0, 1.0),
+                child: Transform.translate(
+                  offset: Offset(0, -10 * t),
+                  child: _buildExtras(context),
                 ),
               ),
             ),
