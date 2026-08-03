@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -682,34 +683,114 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
 /// second, and watching it here keeps those rebuilds inside the gauge instead of
 /// re-running the whole tracking screen — which would rebuild the entire track
 /// timeline once a second.
-class _SpeedometerOverlay extends ConsumerWidget {
+class _SpeedometerOverlay extends ConsumerStatefulWidget {
   const _SpeedometerOverlay();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SpeedometerOverlay> createState() => _SpeedometerOverlayState();
+}
+
+class _SpeedometerOverlayState extends ConsumerState<_SpeedometerOverlay> {
+  bool _demoActive = false;
+  double _demoKmh = 0;
+  Timer? _demoTimer;
+  int _step = 0;
+
+  static const _demoSpeeds = [
+    0.0, 18.0, 42.0, 68.0, 92.0, 115.0, 128.0, 134.0, 130.0, 118.0, 96.0, 72.0, 45.0, 20.0, 0.0
+  ];
+
+  void _toggleDemo() {
+    Haptics.selection();
+    if (_demoActive) {
+      _demoTimer?.cancel();
+      setState(() {
+        _demoActive = false;
+        _demoKmh = 0;
+      });
+    } else {
+      setState(() {
+        _demoActive = true;
+        _step = 0;
+        _demoKmh = _demoSpeeds[0];
+      });
+      _demoTimer?.cancel();
+      _demoTimer = Timer.periodic(const Duration(milliseconds: 550), (t) {
+        if (!mounted) return;
+        setState(() {
+          _step = (_step + 1) % _demoSpeeds.length;
+          _demoKmh = _demoSpeeds[_step];
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _demoTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final async = ref.watch(speedStreamProvider);
 
-    // A dash beats a confident zero: an error or a still-warming fix means we do
-    // not know the speed, and saying so is more honest than showing 0 km/h on a
-    // moving train.
     final sample = switch (async) {
       AsyncData(:final value) => value,
       _ => null,
     };
-    final stale = async.hasError ||
-        (sample != null &&
-            DateTime.now().difference(sample.at) >
-                const Duration(seconds: 12));
+    final stale = !_demoActive &&
+        (async.hasError ||
+            (sample != null &&
+                DateTime.now().difference(sample.at) >
+                    const Duration(seconds: 12)));
 
-    return GlassContainer(
-      radius: 24,
-      blurSigma: 18,
-      strong: true,
-      glow: true,
-      padding: const EdgeInsets.all(10),
-      child: SpeedometerGauge(
-        kmh: sample?.kmh,
-        stale: stale,
+    final displayKmh = _demoActive ? _demoKmh : (sample?.kmh ?? 0.0);
+
+    return GestureDetector(
+      onTap: _toggleDemo,
+      child: GlassContainer(
+        radius: 18,
+        blurSigma: 18,
+        strong: true,
+        glow: true,
+        padding: const EdgeInsets.all(6),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SpeedometerGauge(
+              size: 94,
+              kmh: displayKmh,
+              stale: stale,
+              label: _demoActive ? 'DEMO TEST' : 'GPS SPEED',
+            ),
+            Positioned(
+              top: 2,
+              right: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _demoActive
+                      ? const Color(0xFF10B981).withValues(alpha: 0.3)
+                      : GlassTheme.accentViolet.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: _demoActive ? const Color(0xFF10B981) : GlassTheme.accentViolet,
+                    width: 0.8,
+                  ),
+                ),
+                child: Text(
+                  _demoActive ? 'TEST ▶' : 'DEMO',
+                  style: TextStyle(
+                    color: _demoActive ? const Color(0xFF10B981) : GlassTheme.accentViolet,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
