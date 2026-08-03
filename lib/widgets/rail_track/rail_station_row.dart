@@ -272,19 +272,87 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
     final leg = isArrival ? _live?.arrival : _live?.departure;
     final observed = _live?.canShowActual ?? false;
 
+    // Origin has no arrival: show "Start" over "---".
+    final isStartEndpoint = isArrival &&
+        (widget.item.isFirst || (leg?.isTerminusSentinel ?? false));
+
+    // Terminus has no departure: show "End" over "---".
+    final isEndEndpoint = !isArrival &&
+        (widget.item.isLast || (leg?.isTerminusSentinel ?? false));
+
+    if (isStartEndpoint) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 2, right: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Start',
+              maxLines: 1,
+              softWrap: false,
+              style: AppText.label.copyWith(
+                color: _isPassed ? g.textSecondary : g.textPrimary,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '---',
+              maxLines: 1,
+              softWrap: false,
+              style: AppText.label.copyWith(
+                color: g.textMuted,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (isEndEndpoint) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 2, left: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'End',
+              maxLines: 1,
+              softWrap: false,
+              style: AppText.label.copyWith(
+                color: _isPassed ? g.textSecondary : g.textPrimary,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '---',
+              maxLines: 1,
+              softWrap: false,
+              style: AppText.label.copyWith(
+                color: g.textMuted,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     // Scheduled comes from the route (RailRadar/RailKit static), which is always
     // present, and falls back to RailKit's live copy if the route lacks it.
     final scheduled =
         (isArrival ? _s.scheduledArrival : _s.scheduledDeparture) ??
             leg?.scheduled;
 
-    // The origin has no arrival and the terminus no departure — RailKit marks
-    // these SRC/DSTN. Show nothing rather than a placeholder clock.
-    final isEndpoint = (isArrival && widget.item.isFirst) ||
-        (!isArrival && widget.item.isLast) ||
-        (leg?.isTerminusSentinel ?? false);
-
-    if (isEndpoint && scheduled == null) return const SizedBox.shrink();
+    if (scheduled == null) return const SizedBox.shrink();
 
     final second = _secondLine(context, leg, observed, scheduled, isArrival);
 
@@ -300,7 +368,7 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            scheduled == null ? '—' : Fmt.hhmm(scheduled),
+            Fmt.hhmm(scheduled),
             // One line, always. A wrapped '4:38 / AM' was the most visible
             // symptom of the fixed-width time column on a narrow phone, and it
             // also silently broke the row-height contract by growing the column.
