@@ -43,7 +43,7 @@ enum AlarmTone {
 /// Noto Indic fallbacks stay under every option, so non-Latin scripts never
 /// regress whichever font is chosen.
 enum AppFont {
-  sfPro('SF Pro', 'SF Pro'),
+  sfPro('SF Pro', null),
   system('Default (System)', null),
   inter('Inter', 'Inter'),
   poppins('Poppins', 'Poppins'),
