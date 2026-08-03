@@ -319,7 +319,7 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
 
     if (isStartEndpoint) {
       return Padding(
-        padding: const EdgeInsets.only(top: 2, right: 8),
+        padding: const EdgeInsets.only(top: 0, right: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -330,18 +330,18 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
               softWrap: false,
               style: AppText.label.copyWith(
                 color: _isPassed ? g.textSecondary : g.textPrimary,
-                fontSize: 13.5,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 1),
             Text(
               '---',
               maxLines: 1,
               softWrap: false,
               style: AppText.label.copyWith(
                 color: g.textMuted,
-                fontSize: 13.5,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -352,7 +352,7 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
 
     if (isEndEndpoint) {
       return Padding(
-        padding: const EdgeInsets.only(top: 2, left: 8),
+        padding: const EdgeInsets.only(top: 0, left: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
@@ -363,18 +363,18 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
               softWrap: false,
               style: AppText.label.copyWith(
                 color: _isPassed ? g.textSecondary : g.textPrimary,
-                fontSize: 13.5,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 1),
             Text(
               '---',
               maxLines: 1,
               softWrap: false,
               style: AppText.label.copyWith(
                 color: g.textMuted,
-                fontSize: 13.5,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -577,57 +577,6 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
         ),
         SizedBox(height: _isGapOrLocal ? 1 : 5),
         _subtitle(context),
-        if (widget.item.isFirst) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Find your way to the station',
-            style: AppText.label.copyWith(
-              color: g.textSecondary,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-            decoration: BoxDecoration(
-              color: g.isDark
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.black.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: g.border.withValues(alpha: 0.25),
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 18,
-                  height: 18,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFEA4335),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.location_on,
-                    size: 12,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'Get directions',
-                  style: TextStyle(
-                    color: Color(0xFF60A5FA),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
         AnimatedSize(
           duration: Motion.expand,
           curve: Motion.emphasized,
@@ -696,7 +645,11 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
       children: [
         Text('${Fmt.km(_s.distanceFromOriginKm)} km', style: muted),
         if (!_s.isPassThrough && platform != null)
-          _platformWithEdit(context, platform, muted),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: _platformWithEdit(context, platform, muted),
+          ),
         if (_isGapOrLocal)
           Text(
             'Passes',
@@ -837,6 +790,57 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
                   _infoPill(context, Icons.timer_outlined, 'Halt', _haltLabel!),
               ],
             ),
+            if (widget.item.isFirst) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Find your way to the station',
+                style: AppText.label.copyWith(
+                  color: g.textSecondary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  color: g.isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.black.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: g.border.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFEA4335),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.location_on,
+                        size: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Get directions',
+                      style: TextStyle(
+                        color: Color(0xFF60A5FA),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (_s.note != null) ...[
               const SizedBox(height: 10),
               Row(
