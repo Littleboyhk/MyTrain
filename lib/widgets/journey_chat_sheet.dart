@@ -58,29 +58,7 @@ class _JourneyChatSheetContentState extends State<_JourneyChatSheetContent> {
   final ScrollController _scrollController = ScrollController();
   bool _isFullScreen = false;
 
-  final List<ChatMessage> _messages = [
-    const ChatMessage(
-      id: '1',
-      senderName: 'Passenger #12 (B2)',
-      text: 'Water bottle and pantry vendor just passed coach B2 🥤',
-      timestamp: '10:14 AM',
-      isMe: false,
-    ),
-    const ChatMessage(
-      id: '2',
-      senderName: 'Passenger #04 (S4)',
-      text: 'Train running on time, crossed signal 42 at 85 km/h 🚆',
-      timestamp: '10:18 AM',
-      isMe: false,
-    ),
-    const ChatMessage(
-      id: '3',
-      senderName: 'Passenger #19 (A1)',
-      text: 'Cleanliness check completed in AC coach A1',
-      timestamp: '10:22 AM',
-      isMe: false,
-    ),
-  ];
+  final List<ChatMessage> _messages = [];
 
   void _sendMessage() {
     final text = _inputController.text.trim();
@@ -226,20 +204,49 @@ class _JourneyChatSheetContentState extends State<_JourneyChatSheetContent> {
 
               // Messages list
               Expanded(
-                child: ScrollConfiguration(
-                  behavior:
-                      ScrollConfiguration.of(context).copyWith(scrollbars: false),
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: _messages.length,
-                    itemBuilder: (ctx, idx) {
-                      final msg = _messages[idx];
-                      return _buildMessageBubble(ctx, msg);
-                    },
-                  ),
-                ),
+                child: _messages.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              size: 40,
+                              color: g.textMuted.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No messages yet',
+                              style: AppText.titleStrong.copyWith(
+                                color: g.textPrimary,
+                                fontSize: 15,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Be the first to send a message to co-passengers!',
+                              style: AppText.label.copyWith(
+                                color: g.textMuted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ScrollConfiguration(
+                        behavior:
+                            ScrollConfiguration.of(context).copyWith(scrollbars: false),
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          physics: const BouncingScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: _messages.length,
+                          itemBuilder: (ctx, idx) {
+                            final msg = _messages[idx];
+                            return _buildMessageBubble(ctx, msg);
+                          },
+                        ),
+                      ),
               ),
 
               const SizedBox(height: 10),
