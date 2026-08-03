@@ -247,7 +247,7 @@ class JourneyHeroCard extends StatelessWidget {
         ),
         const SizedBox(height: 5),
         Text(
-          name,
+          Fmt.stationTitle(name),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: align,

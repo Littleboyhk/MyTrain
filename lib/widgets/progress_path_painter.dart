@@ -24,11 +24,15 @@ class TrainTrackPath {
 
   /// Position + tangent angle at fraction [t] (0..1) along the path.
   static ({Offset position, double angle}) sample(Size size, double t) {
-    final metric = build(size).computeMetrics().first;
-    final tangent = metric.getTangentForOffset(
-      (metric.length * t.clamp(0.0, 1.0)),
+    final metrics = build(size).computeMetrics();
+    if (metrics.isEmpty) return (position: Offset.zero, angle: 0.0);
+    final metric = metrics.first;
+    final clampedT = t.clamp(0.0, 1.0);
+    final tangent = metric.getTangentForOffset(metric.length * clampedT);
+    return (
+      position: tangent?.position ?? Offset.zero,
+      angle: tangent?.angle ?? 0.0,
     );
-    return (position: tangent!.position, angle: tangent.angle);
   }
 }
 
