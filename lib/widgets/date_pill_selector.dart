@@ -34,7 +34,7 @@ class DatePillSelector extends StatefulWidget {
   // scale reached ~1.15 — the tall Noto fallback metrics made it worse), plus a
   // reserved slot for the "today" dot marker. Verified by measurement across
   // scale 1.0/1.15/1.3/2.0.
-  static const double pillHeight = 46;
+  static const double pillHeight = 52;
   static const double gap = 10;
 
   /// Compact glanceable chips: their text is capped so a very large system font
@@ -93,7 +93,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
     return MediaQuery(
       data: mq.copyWith(textScaler: clamped),
       child: SizedBox(
-      height: DatePillSelector.pillHeight + 20,
+      height: DatePillSelector.pillHeight + 16,
       child: SingleChildScrollView(
         controller: _scroll,
         scrollDirection: Axis.horizontal,
@@ -101,7 +101,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: SizedBox(
           width: totalWidth,
-          height: DatePillSelector.pillHeight + 14,
+          height: DatePillSelector.pillHeight + 10,
           child: Stack(
             children: [
               // Sliding active background.
@@ -109,13 +109,13 @@ class _DatePillSelectorState extends State<DatePillSelector> {
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 left: widget.selectedIndex * _stride,
-                top: 6,
+                top: 4,
                 width: DatePillSelector.pillWidth,
                 height: DatePillSelector.pillHeight,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: GlassTheme.accent,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(14),
                     boxShadow: [
                       BoxShadow(
                         color: GlassTheme.accentIndigo.withValues(alpha: 0.35),
@@ -127,7 +127,7 @@ class _DatePillSelectorState extends State<DatePillSelector> {
               ),
               // Pill labels.
               Padding(
-                padding: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.only(top: 4),
                 child: Row(
                 children: [
                   for (int i = 0; i < widget.days.length; i++)
