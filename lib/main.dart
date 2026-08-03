@@ -8,17 +8,25 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'config/supabase_config.dart';
+import 'data/app_settings_controller.dart';
 import 'data/language_controller.dart';
 import 'data/theme_controller.dart';
 import 'l10n/app_localizations.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
+import 'theme/glass_quality.dart';
 import 'widgets/app_text_defaults.dart';
 import 'widgets/aurora_background.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Watch frame timings from the very first frame. GlassSurface and
+  // AuroraBackground each call this too, but starting here means the launch
+  // frames — the ones most likely to be slow on a mid-range device — are counted
+  // rather than missed.
+  GlassQuality.instance.ensureMonitoring();
 
   // Load .env environment variables safely
   try {
@@ -61,6 +69,10 @@ class MyTrainApp extends ConsumerWidget {
     final mode = ref.watch(themeModeProvider);
     // Selecting a language in the picker rebuilds the whole app in that locale.
     final language = ref.watch(languageProvider);
+    // The chosen typeface flows into both themes below. Watching only this
+    // field keeps unrelated settings changes from rebuilding the whole app.
+    final fontFamily =
+        ref.watch(appSettingsProvider.select((s) => s.appFont)).googleFamily;
 
     // Resolve the effective brightness (mode + platform for "system").
     final platformBrightness =
@@ -92,8 +104,8 @@ class MyTrainApp extends ConsumerWidget {
     return MaterialApp(
       title: 'My Train',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.themeFor(AppPalette.light),
-      darkTheme: AppTheme.themeFor(AppPalette.dark),
+      theme: AppTheme.themeFor(AppPalette.light, fontFamily: fontFamily),
+      darkTheme: AppTheme.themeFor(AppPalette.dark, fontFamily: fontFamily),
       themeMode: mode,
       // Localization: the user's saved choice drives the locale. Keys missing
       // from a translated .arb fall back to English automatically.

@@ -4,6 +4,19 @@
 <dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>My Train uses your location only while you choose "I'm on this train" to share your position with other riders and improve live tracking accuracy. You can turn this off anytime.</string>
+	<!-- Offline tracking: with no mobile data, the train's position is worked out
+	     on-device by matching your location against the route downloaded earlier.
+	     "Always" is what lets that continue with the screen locked; granting only
+	     "While Using the App" is fully supported and simply pauses tracking when
+	     you leave the app. -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>My Train can keep following your train while the app is in the background, so your position and ETA stay up to date in areas with no mobile signal. Your location is used on your device for this and is never shared unless you turn on sharing.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>My Train can keep following your train while the app is in the background, so your position and ETA stay up to date in areas with no mobile signal.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

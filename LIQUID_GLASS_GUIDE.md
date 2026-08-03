@@ -29,9 +29,21 @@ specular rim lit from the top-left, plus a soft coloured glow beneath.
   bottom-right white gradient (bright lit corner → near-invisible). Passed as a
   **`foregroundPainter`** so it sits above the fill. THIS is what reads as
   glass, not a flat `Border.all`. Alphas: light `0.70→0.10`, dark `0.32→0.03`.
-- `glassFillGradient(dark, {strong})` — translucent tint fill, brighter
+- `glassFillGradient(dark, {strong, blurless})` — translucent tint fill, brighter
   top-left. Light = white `0.62→0.42`; dark = `#20202A` `0.34→0.22` (dark uses
-  HIGHER fill than light).
+  HIGHER fill than light). `strong` raises these to `0.72→0.52` / `0.42→0.30`.
+  - **`blurless` is a separate tier, not "extra strong":** light `0.96→0.92`,
+    dark `0.94→0.90`. It is for a surface that asked for a backdrop blur and was
+    refused one by `GlassQuality`. The normal alphas only work *because* the blur
+    has already destroyed the backdrop; with no blur they are a tinted film and
+    page content stays legible through the bottom nav and every modal sheet.
+    Without this tier the degrade was a legibility regression.
+  - A call site asking for `blur: 0` is **not** the same case — that is a
+    deliberately flat nested well inside an already-opaque parent, and it keeps
+    the translucent fill. `GlassSurface` distinguishes the two via
+    `blur > 0 && !blurring`. Covered by `test/glass_opacity_test.dart`.
+  - To see the degraded look on a machine fast enough never to trigger it:
+    `flutter run --dart-define=MYTRAIN_FORCE_NO_BLUR=true`.
 - `glassGlow(dark, {raised})` — soft glow beneath. Light = indigo `@0.14`;
   dark = near-black shadow + faint indigo `@0.05` (depth from black, not a halo).
 - `glassFill(context)` / `glassStroke(context)` — flat fill + hairline stroke
@@ -286,6 +298,23 @@ detail screens which don't use `MeshBackground` or the glass theme.
 - [ ] **Performance:** if scroll jank appears with many cards, the cheapest
       lever is reducing layer count on `GlassSurface` further (glow layers are
       cheap gradients; only one `BackdropFilter` per surface today).
+- [ ] **`GlassCard` is not perf-gated — KNOWN GAP, deferred deliberately.**
+      It applies `BackdropFilter` unconditionally and never consults
+      `GlassQuality`, so when the auto-degrade trips and blur is dropped
+      app-wide, `GlassCard` keeps paying full blur cost. It also therefore never
+      gets the `blurless` fill compensation, so it is the one surface type that
+      *should* stay legible-through-safe by accident (it is still blurred) but
+      will not degrade on a slow device.
+      Only 2 call sites, so impact is small; left alone rather than changing perf
+      behaviour outside the scope of the opacity pass. Fix = wrap `build` in the
+      same `ValueListenableBuilder<bool>` on `GlassQuality.instance.blurEnabled`
+      that `GlassSurface` uses, and pass `blurless:` to `glassFillGradient`.
+- [x] **`fillColor` bypasses the `blurless` tier — reviewed, accepted.**
+      A call site passing an explicit `fillColor` gets that flat colour instead of
+      the gradient, so it does not receive the no-blur opacity compensation. Only
+      `speedometer_gauge.dart` (`g.railTie`) does this today, and it is a small
+      element rather than a pane with content behind it. Not worth special-casing;
+      revisit only if a full-size surface ever takes a `fillColor`.
 - [ ] **Re-introduce a specular line?** Only if desired — must be a *crisp* line
       (fade within top ~4–6%, low alpha ~0.20 dark) to avoid the earlier smudge.
 

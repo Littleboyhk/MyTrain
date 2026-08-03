@@ -78,7 +78,57 @@
       "query": {}
     }
   },
+  "sectionPersonal": "PERSONAL",
+  "sectionSpot": "SPOT SETTINGS",
+  "sectionSpeedometer": "SPEEDOMETER SETTINGS",
+  "sectionAlarm": "ALARM SETTINGS",
+  "timeSettings": "Time settings",
+  "timeSettingsHint": "Show times as AM/PM instead of 24-hour",
+  "insideTrainSetting": "Are you inside train option",
+  "insideTrainSettingHint": "Suggest sharing your location when a journey opens",
+  "spotNotifications": "Spot notifications",
+  "spotNotificationsHint": "Your location as a standing notification",
+  "spotNotificationsUnsupported": "Not available in this build — needs a notification plugin, and has no web equivalent",
+  "@spotNotificationsUnsupported": {
+    "description": "Shown instead of the normal hint when a standing notification cannot be delivered on this platform."
+  },
+  "speedometerSetting": "Speedometer (Beta)",
+  "speedometerSettingHint": "Show live GPS speed while tracking",
+  "speedometerRequiresGps": "Appears on the tracking screen once you start sharing your location in GPS mode, which is where the speed reading comes from.",
+  "alarmTone": "Alarm tone",
+  "alarmToneChanged": "Alarm tone set to {tone}",
+  "@alarmToneChanged": {
+    "placeholders": {
+      "tone": {
+        "type": "String"
+      }
+    }
+  },
+  "alarmTonePlaybackNote": "Select an alarm tone to preview and set your preferred sound.",
   "noTrainsMatch": "No trains match your filters",
+  "trainNotFound": "Train {number} not found",
+  "@trainNotFound": {
+    "description": "Shown when a train-number lookup completed successfully but no such train exists.",
+    "placeholders": {
+      "number": {
+        "type": "String"
+      }
+    }
+  },
+  "trainNotFoundHint": "Check the number and try again",
+  "trainLookupFailed": "Couldn't check right now",
+  "@trainLookupFailed": {
+    "description": "Shown when a train-number lookup could not be completed at all (offline, quota, server error). Deliberately different from trainNotFound, because the user's next action is to retry rather than to correct the number."
+  },
+  "trainLookupFailedHint": "Something went wrong reaching the railway data. Try again in a moment.",
+  "searchingTrain": "Looking up train {number}…",
+  "@searchingTrain": {
+    "placeholders": {
+      "number": {
+        "type": "String"
+      }
+    }
+  },
   "statusOnTime": "On time",
   "statusDelayedMin": "Delayed {minutes}m",
   "@statusDelayedMin": {

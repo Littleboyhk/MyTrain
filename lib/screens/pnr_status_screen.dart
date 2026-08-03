@@ -14,6 +14,8 @@ import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
 import '../theme/motion.dart';
 import '../utils/haptics.dart';
+import '../utils/train_name.dart';
+import '../widgets/berth_bay_view.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/icon_action_button.dart';
 import '../widgets/liquid_glass_button.dart';
@@ -307,33 +309,49 @@ class _InputCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          LiquidGlassButton(
-            onPressed: isValid ? onSubmit : null,
-            enabled: isValid,
-            expand: true,
-            cornerRadius: 18,
-            tint: isValid ? AppColors.accent : null,
-            glowColor: AppColors.accent,
-            padding: const EdgeInsets.symmetric(vertical: 15),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.search_rounded,
-                  size: 20,
-                  color: isValid ? Colors.white : AppColors.textMuted,
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  L10n.of(context).pnrCheckCta,
-                  style: TextStyle(
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
+          GlassSurface(
+            radius: 999,
+            blur: 16,
+            padding: const EdgeInsets.all(3.5),
+            child: LiquidGlassButton(
+              onPressed: isValid ? onSubmit : null,
+              enabled: isValid,
+              expand: true,
+              cornerRadius: 999,
+              gradient: isValid
+                  ? const LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        Color(0xFF8B5CF6), // Vibrant Violet
+                        Color(0xFF6366F1), // Electric Indigo
+                      ],
+                    )
+                  : null,
+              glowColor: const Color(0xFF8B5CF6),
+              padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 16),
+              semanticLabel: L10n.of(context).pnrCheckCta,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.search_rounded,
+                    size: 19,
                     color: isValid ? Colors.white : AppColors.textMuted,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Text(
+                    L10n.of(context).pnrCheckCta,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                      color: isValid ? Colors.white : AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -421,12 +439,16 @@ class _PnrResultView extends StatelessWidget {
   Widget build(BuildContext context) {
     final sections = <Widget>[
       _HeaderCard(result: result),
-      _ChartStatusCard(status: result.chartStatus),
+      // Omitted when the provider did not state it. "Chart prepared" is a claim
+      // a passenger acts on, so silence beats a default.
+      if (result.chartStatus != null)
+        _ChartStatusCard(status: result.chartStatus!),
       _PassengersHeader(
         total: result.passengers.length,
         confirmed: result.confirmedCount,
       ),
-      for (final p in result.passengers) _PassengerCard(passenger: p),
+      for (final p in result.passengers)
+        _PassengerCard(passenger: p, travelClass: result.travelClass),
       const _FooterNote(),
     ];
 
@@ -484,11 +506,36 @@ class _HeaderCard extends StatelessWidget {
               TrainNumberTag(t.number, fontSize: 14),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  t.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.titleStrong.copyWith(fontSize: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // The provider's own name stays primary. `YPR TVCN GR EXP` is
+                    // what RailKit sends and what is printed on the ticket.
+                    Text(
+                      t.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.titleStrong.copyWith(fontSize: 16),
+                    ),
+                    // The readable long form, DERIVED. Secondary and muted because
+                    // it is ours, not the railway's — see expandTrainName. Omitted
+                    // entirely when nothing could be expanded, rather than
+                    // repeating the line above.
+                    if (expandTrainName(t.name) case final String long)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          long,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppText.label.copyWith(
+                            color: AppColors.textMuted,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],
@@ -498,12 +545,17 @@ class _HeaderCard extends StatelessWidget {
           const SizedBox(height: 16),
           Container(height: 1, color: AppColors.lineMuted),
           const SizedBox(height: 14),
+          // Each chip is omitted rather than dashed when unknown: an empty chip
+          // is noise, and a guessed date or class is worse.
           Row(
             children: [
-              _metaChip(Icons.event_rounded, result.dateLabel),
-              const SizedBox(width: 10),
-              _metaChip(Icons.airline_seat_recline_normal_rounded,
-                  result.classLabel),
+              if (result.dateLabel != null)
+                _metaChip(Icons.event_rounded, result.dateLabel!),
+              if (result.dateLabel != null && result.classLabel != null)
+                const SizedBox(width: 10),
+              if (result.classLabel != null)
+                _metaChip(Icons.airline_seat_recline_normal_rounded,
+                    result.classLabel!),
             ],
           ),
         ],
@@ -542,9 +594,11 @@ class _HeaderCard extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        _endpoint(t.departure, t.fromCode, t.fromName, false, 0),
-        Expanded(child: _connector(t.duration)),
-        _endpoint(t.arrival, t.toCode, t.toName, true, t.arrivalDayOffset),
+        // A PNR response carries no timetable, so these are routinely null here.
+        // An em dash is the honest render; this used to show 17:00 / 08:35.
+        _endpoint(t.departure ?? '—', t.fromCode, t.fromName, false, 0),
+        Expanded(child: _connector(t.duration ?? '—')),
+        _endpoint(t.arrival ?? '—', t.toCode, t.toName, true, t.arrivalDayOffset),
       ],
     );
   }
@@ -823,15 +877,18 @@ class _PassengersHeader extends StatelessWidget {
 }
 
 class _PassengerCard extends StatelessWidget {
-  const _PassengerCard({required this.passenger});
+  const _PassengerCard({required this.passenger, required this.travelClass});
 
   final PnrPassenger passenger;
+
+  /// Needed for the bay view's gating — the layout convention is class-specific
+  /// and only sourced for sleeper. Null (unknown class) gates the grid off.
+  final String? travelClass;
 
   @override
   Widget build(BuildContext context) {
     final g = context.glass;
-    return GlassSurface(
-      radius: 18,
+    return GlassSurface(      radius: 18,
       strong: true,
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -868,6 +925,16 @@ class _PassengerCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           _comparison(g),
+          // Bay diagram for confirmed SL/3A berths, the plain berth line for
+          // every other class. BerthBayView owns that choice and renders nothing
+          // at all for RAC/waitlisted/cancelled.
+          if (passenger.current.status == PassengerStatus.confirmed) ...[
+            const SizedBox(height: 14),
+            BerthBayView(
+              travelClass: travelClass,
+              allocation: passenger.current,
+            ),
+          ],
         ],
       ),
     );

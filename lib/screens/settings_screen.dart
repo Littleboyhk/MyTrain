@@ -1,14 +1,20 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+import '../data/app_settings_controller.dart';
 import '../data/chat_gate_controller.dart';
 import '../data/language_controller.dart';
+import '../data/offline/route_cache_store.dart';
 import '../data/phone_auth_service.dart';
+import '../data/spot_notification_service.dart';
 import '../data/theme_controller.dart';
 import '../l10n/app_localizations.dart';
+import '../services/audio_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
 import '../theme/motion.dart';
+import '../utils/formatters.dart';
 import '../utils/haptics.dart';
 import '../widgets/glass_container.dart';
 import '../widgets/icon_action_button.dart';
@@ -27,6 +33,12 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(themeModeProvider);
+    final settings = ref.watch(appSettingsProvider);
+    final auth = ref.watch(authUserProvider);
+    final user = switch (auth) {
+      AsyncData(:final value) => value,
+      _ => null,
+    };
     final g = context.glass;
 
     return Scaffold(
@@ -47,6 +59,10 @@ class SettingsScreen extends ConsumerWidget {
                 const SizedBox(height: 12),
                 _accountCard(context, ref),
                 const SizedBox(height: 28),
+                _sectionLabel(context, 'TIMETABLE & DATA'),
+                const SizedBox(height: 12),
+                _timetableCard(context, ref),
+                const SizedBox(height: 28),
                 _sectionLabel(context, L10n.of(context).sectionAppearance),
                 const SizedBox(height: 12),
                 _themeSelector(context, ref, mode),
@@ -62,14 +78,32 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 28),
-                _sectionLabel(context, L10n.of(context).sectionLanguage),
                 const SizedBox(height: 12),
-                _languageCard(context, ref),
+                _fontCard(context, ref, settings),
+                const SizedBox(height: 28),
+                _sectionLabel(context, L10n.of(context).sectionPersonal),
+                const SizedBox(height: 12),
+                _personalCard(context, ref, settings),
+                const SizedBox(height: 28),
+                _sectionLabel(context, L10n.of(context).sectionSpot),
+                const SizedBox(height: 12),
+                _spotCard(context, ref, settings),
+                const SizedBox(height: 28),
+                _sectionLabel(context, L10n.of(context).sectionSpeedometer),
+                const SizedBox(height: 12),
+                _speedometerCard(context, ref, settings),
+                const SizedBox(height: 28),
+                _sectionLabel(context, L10n.of(context).sectionAlarm),
+                const SizedBox(height: 12),
+                _alarmCard(context, ref, settings),
                 const SizedBox(height: 28),
                 _sectionLabel(context, L10n.of(context).sectionAbout),
                 const SizedBox(height: 12),
                 _aboutCard(context),
+                if (user != null) ...[
+                  const SizedBox(height: 28),
+                  _signOutCard(context, ref),
+                ],
               ],
             ),
           ),
@@ -186,18 +220,592 @@ class SettingsScreen extends ConsumerWidget {
     Future.delayed(const Duration(milliseconds: 1900), entry.remove);
   }
 
-  /// Opens the same picker used on first launch, so the choice can be changed
-  /// any time. Changing it rebuilds the whole app in the selected locale.
-  Widget _languageCard(BuildContext context, WidgetRef ref) {
-    final g = context.glass;
-    final lang = ref.watch(languageProvider);
+  /// Color-coded full-width banner toast for timetable status updates.
+  void _statusToast(
+    BuildContext context, {
+    required String message,
+    required Color backgroundColor,
+    required Color textColor,
+  }) {
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Material(
+          type: MaterialType.transparency,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.30),
+                  blurRadius: 10,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+            ),
+            child: Text(
+              message,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(milliseconds: 2200), entry.remove);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Personal
+  // ---------------------------------------------------------------------------
+
+  /// Language, clock format, and the inside-train prompt.
+  Widget _personalCard(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+  ) {
     return GlassContainer(
       radius: 22,
       blurSigma: 20,
       strong: true,
       padding: const EdgeInsets.all(6),
+      child: Column(
+        children: [
+          _languageRow(context, ref),
+          _divider(context),
+          _switchRow(
+            context,
+            icon: Icons.schedule_rounded,
+            title: L10n.of(context).timeSettings,
+            subtitle: L10n.of(context).timeSettingsHint,
+            value: settings.use12HourClock,
+            onChanged: (v) {
+              Haptics.selection();
+              ref.read(appSettingsProvider.notifier).setUse12HourClock(v);
+            },
+            // Live proof the switch did something, in the format just chosen.
+            trailingNote: Fmt.hhmm(DateTime(2026, 1, 1, 16, 25)),
+          ),
+          _divider(context),
+          _switchRow(
+            context,
+            icon: Icons.train_rounded,
+            title: L10n.of(context).insideTrainSetting,
+            subtitle: L10n.of(context).insideTrainSettingHint,
+            value: settings.suggestInsideTrain,
+            onChanged: (v) {
+              Haptics.selection();
+              ref.read(appSettingsProvider.notifier).setSuggestInsideTrain(v);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Timetable & Cache
+  // ---------------------------------------------------------------------------
+
+  static bool _isCheckingTimetable = false;
+
+  Widget _timetableCard(BuildContext context, WidgetRef ref) {
+    final g = context.glass;
+    final store = ref.watch(offlineRouteStoreProvider);
+    final ageLabel = store.getTimetableUpdateAge();
+
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: _accountRow(
+        context,
+        icon: Icons.system_update_alt_rounded,
+        title: 'Update Timetable',
+        subtitle: 'Sync latest train schedules and station routes',
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              ageLabel,
+              style: AppText.label.copyWith(
+                color: g.textMuted,
+                fontSize: 12.5,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
+          ],
+        ),
+        onTap: () async {
+          if (_isCheckingTimetable) return;
+          _isCheckingTimetable = true;
+          Haptics.tap();
+          _statusToast(
+            context,
+            message: 'Checking for new schedule...',
+            backgroundColor: const Color(0xFF2E7D32),
+            textColor: Colors.white,
+          );
+
+          final hasUpdates = await store.checkTimetableUpdate();
+          _isCheckingTimetable = false;
+
+          if (context.mounted) {
+            ref.invalidate(offlineRouteStoreProvider);
+            _statusToast(
+              context,
+              message: hasUpdates
+                  ? 'Timetable updated successfully!'
+                  : 'No new schedules available!',
+              backgroundColor: hasUpdates
+                  ? const Color(0xFF2E7D32)
+                  : const Color(0xFFEF6C00),
+              textColor: Colors.white,
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Spot
+  // ---------------------------------------------------------------------------
+
+  Widget _spotCard(BuildContext context, WidgetRef ref, AppSettings settings) {
+    final supported = AppSettingsController.spotNotificationsSupported;
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: _switchRow(
+        context,
+        icon: Icons.notifications_active_rounded,
+        title: L10n.of(context).spotNotifications,
+        subtitle: supported
+            ? L10n.of(context).spotNotificationsHint
+            : L10n.of(context).spotNotificationsUnsupported,
+        value: supported && settings.spotNotifications,
+        enabled: supported,
+        onChanged: (v) async {
+          Haptics.selection();
+          ref.read(appSettingsProvider.notifier).setSpotNotifications(v);
+          if (v) {
+            final ok = await ref
+                .read(spotNotificationServiceProvider)
+                .requestPermission();
+            if (context.mounted && ok) {
+              _toast(context, 'Spot notifications enabled');
+            }
+          } else {
+            if (context.mounted) {
+              _toast(context, 'Spot notifications disabled');
+            }
+          }
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Speedometer
+  // ---------------------------------------------------------------------------
+
+  Widget _speedometerCard(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+  ) {
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: Column(
+        children: [
+          _switchRow(
+            context,
+            icon: Icons.speed_rounded,
+            title: L10n.of(context).speedometerSetting,
+            subtitle: L10n.of(context).speedometerSettingHint,
+            value: settings.speedometerEnabled,
+            onChanged: (v) {
+              Haptics.selection();
+              ref.read(appSettingsProvider.notifier).setSpeedometerEnabled(v);
+            },
+          ),
+          if (settings.speedometerEnabled) ...[
+            _divider(context),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      size: 15, color: context.glass.textMuted),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      L10n.of(context).speedometerRequiresGps,
+                      style: AppText.label.copyWith(
+                        color: context.glass.textMuted,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Alarm
+  // ---------------------------------------------------------------------------
+
+  Widget _alarmCard(BuildContext context, WidgetRef ref, AppSettings settings) {
+    final g = context.glass;
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: _accountRow(
+        context,
+        icon: Icons.music_note_rounded,
+        title: L10n.of(context).alarmTone,
+        subtitle: settings.alarmTone.label,
+        trailing:
+            Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
+        onTap: () async {
+          Haptics.tap();
+          final picked = await _pickAlarmTone(context, settings.alarmTone);
+          if (picked == null || !context.mounted) return;
+          ref.read(appSettingsProvider.notifier).setAlarmTone(picked);
+          _toast(context, L10n.of(context).alarmToneChanged(picked.label));
+        },
+      ),
+    );
+  }
+
+  Future<AlarmTone?> _pickAlarmTone(
+    BuildContext context,
+    AlarmTone current,
+  ) {
+    final g = context.glass;
+    return showModalBottomSheet<AlarmTone>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 12,
+          right: 12,
+          bottom: 12 + MediaQuery.of(ctx).viewPadding.bottom,
+        ),
+        child: GlassContainer(
+          radius: 28,
+          blurSigma: 24,
+          strong: true,
+          glow: true,
+          padding: const EdgeInsets.fromLTRB(18, 18, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                L10n.of(ctx).alarmTone,
+                style: AppText.titleStrong
+                    .copyWith(color: g.textPrimary, fontSize: 19),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                L10n.of(ctx).alarmTonePlaybackNote,
+                style: AppText.label
+                    .copyWith(color: g.textMuted, fontSize: 12.5, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              for (final tone in AlarmTone.values)
+                Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () {
+                      AudioService.instance.playTone(tone);
+                      Navigator.of(ctx).pop(tone);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 13),
+                      child: Row(
+                        children: [
+                          Icon(
+                            tone == current
+                                ? Icons.radio_button_checked_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            size: 20,
+                            color: tone == current
+                                ? GlassTheme.accentViolet
+                                : g.textMuted,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            tone.label,
+                            style: AppText.label.copyWith(
+                              color: g.textPrimary,
+                              fontSize: 14.5,
+                              fontWeight: tone == current
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Font
+  // ---------------------------------------------------------------------------
+
+  /// Whole-app typeface picker. Mirrors the alarm-tone row: a tap opens a
+  /// bottom-sheet radio list, and the choice is persisted + applied app-wide via
+  /// `appFont` → `AppTheme.themeFor` (see `main.dart`).
+  Widget _fontCard(BuildContext context, WidgetRef ref, AppSettings settings) {
+    final g = context.glass;
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: _accountRow(
+        context,
+        icon: Icons.text_fields_rounded,
+        // TODO(l10n): needs an .arb key like the rest of Appearance; English
+        // literal for now, matching the account section's existing TODO.
+        title: 'Font',
+        subtitle: settings.appFont.label,
+        trailing:
+            Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
+        onTap: () async {
+          Haptics.tap();
+          final picked = await _pickFont(context, settings.appFont);
+          if (picked == null || !context.mounted) return;
+          ref.read(appSettingsProvider.notifier).setAppFont(picked);
+          _toast(context, 'Font set to ${picked.label}');
+        },
+      ),
+    );
+  }
+
+  Future<AppFont?> _pickFont(BuildContext context, AppFont current) {
+    final g = context.glass;
+    return showModalBottomSheet<AppFont>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 12,
+          right: 12,
+          bottom: 12 + MediaQuery.of(ctx).viewPadding.bottom,
+        ),
+        child: GlassContainer(
+          radius: 28,
+          blurSigma: 24,
+          strong: true,
+          glow: true,
+          padding: const EdgeInsets.fromLTRB(18, 18, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Font',
+                style: AppText.titleStrong
+                    .copyWith(color: g.textPrimary, fontSize: 19),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Changes the typeface across the whole app. Each name previews '
+                'in its own font.',
+                style: AppText.label
+                    .copyWith(color: g.textMuted, fontSize: 12.5, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              for (final font in AppFont.values)
+                Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () {
+                      Haptics.selection();
+                      Navigator.of(ctx).pop(font);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 13),
+                      child: Row(
+                        children: [
+                          Icon(
+                            font == current
+                                ? Icons.radio_button_checked_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            size: 20,
+                            color: font == current
+                                ? GlassTheme.accentViolet
+                                : g.textMuted,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              font.label,
+                              style: _previewStyle(font).copyWith(
+                                color: g.textPrimary,
+                                fontSize: 15.5,
+                                fontWeight: font == current
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            'Aa 123',
+                            style: _previewStyle(font).copyWith(
+                              color: g.textMuted,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A [TextStyle] in [font]'s own face, for the picker preview. `getFont` also
+  /// warms the family so the choice applies the moment it is selected.
+  TextStyle _previewStyle(AppFont font) {
+    final family = font.googleFamily;
+    if (family == null) return const TextStyle();
+    return GoogleFonts.getFont(family);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared rows
+  // ---------------------------------------------------------------------------
+
+  /// A labelled switch row. [enabled] false greys it out and ignores taps, for
+  /// settings the platform cannot honour.
+  Widget _switchRow(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    bool enabled = true,
+    String? trailingNote,
+  }) {
+    final g = context.glass;
+    final tint = enabled ? GlassTheme.accentViolet : g.textMuted;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        children: [
+          GlassContainer(
+            radius: 12,
+            blurSigma: 0,
+            strong: true,
+            padding: const EdgeInsets.all(8),
+            child: Icon(icon, size: 18, color: tint),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppText.label.copyWith(
+                    color: enabled ? g.textPrimary : g.textMuted,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: AppText.label.copyWith(
+                    color: g.textMuted,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (trailingNote != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              trailingNote,
+              style: AppText.label.copyWith(
+                color: g.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(width: 6),
+          Switch.adaptive(
+            value: value,
+            onChanged: enabled ? onChanged : null,
+            activeThumbColor: Colors.white,
+            activeTrackColor: g.statusGreen,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Opens the same picker used on first launch, so the choice can be changed
+  /// any time. Changing it rebuilds the whole app in the selected locale.
+  Widget _languageRow(BuildContext context, WidgetRef ref) {
+    final g = context.glass;
+    final lang = ref.watch(languageProvider);
+    return
       // Material+InkWell so the ripple is clipped to the card's rounded corners.
-      child: Material(
+      Material(
         type: MaterialType.transparency,
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
@@ -263,7 +871,6 @@ class SettingsScreen extends ConsumerWidget {
               Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
             ],
           ),
-        ),
         ),
       ),
     );
@@ -332,24 +939,31 @@ class SettingsScreen extends ConsumerWidget {
                 _toast(context, 'Signed in');
               },
             )
-          else ...[
+          else
             _accountRow(
               context,
               icon: Icons.verified_user_rounded,
               title: _maskPhone(user.phone),
               subtitle: 'Phone verified',
             ),
-            _divider(context),
-            _accountRow(
-              context,
-              icon: Icons.logout_rounded,
-              title: 'Sign out',
-              subtitle: 'You\'ll need to verify your number again',
-              destructive: true,
-              onTap: () => _signOut(context, ref),
-            ),
-          ],
         ],
+      ),
+    );
+  }
+
+  Widget _signOutCard(BuildContext context, WidgetRef ref) {
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: _accountRow(
+        context,
+        icon: Icons.logout_rounded,
+        title: 'Sign out',
+        subtitle: 'You\'ll need to verify your number again',
+        destructive: true,
+        onTap: () => _signOut(context, ref),
       ),
     );
   }

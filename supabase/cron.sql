@@ -90,3 +90,36 @@ select cron.schedule(
   '*/15 * * * *',
   $$ select public.chat_purge_expired(); $$
 );
+
+-- ---------------------------------------------------------------------------
+-- Phase 2: rebuild the cell-tower → position table, daily at 03:20 UTC.
+--
+-- Runs in-database (no Edge Function needed), like the chat purge above, so it
+-- needs no service key and cannot fail on a network hiccup.
+--
+-- Daily rather than hourly on purpose: this dataset is only useful once it has
+-- accumulated, nothing reads it for live tracking, and a full re-aggregate is
+-- cheap at this size but pointless to repeat often.
+-- ---------------------------------------------------------------------------
+select cron.schedule(
+  'refresh-cell-tower-locations',
+  '20 3 * * *',
+  $$ select public.refresh_cell_tower_locations(); $$
+);
+
+-- ---------------------------------------------------------------------------
+-- Phase 2 retention: drop raw cell observations after 90 days, weekly.
+--
+-- The raw log pairs a device hash with a location trace, so it is not kept
+-- indefinitely. The aggregate it feeds (cell_tower_locations) carries no device
+-- identifier and is retained — the useful signal survives the raw rows.
+--
+-- 90 days rather than the 48h used for crowd_positions: unlike a live position
+-- ping, a tower observation only becomes meaningful in aggregate, and towers
+-- need repeat sightings across weeks to clear the 3-sample floor.
+-- ---------------------------------------------------------------------------
+select cron.schedule(
+  'cleanup-old-cell-observations',
+  '40 4 * * 0',
+  $$ delete from public.cell_tower_logs where created_at < now() - interval '90 days'; $$
+);

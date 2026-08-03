@@ -25,7 +25,9 @@ that does not exist.
 | # | Finding | Evidence |
 |---|---------|----------|
 | D1 | The train's position is only ever known **at a station**, never between two. `_applyLiveStatus` sets `segmentProgress: 0` in every branch. RailKit `track-train` returns a current station code and a train-level delay, nothing about progress along a segment. | `lib/data/tracking_controller.dart` |
-| D2 | **No per-station actual or delay times exist.** The RailRadar mapper hardcodes `delayMinutes: 0` with an explicit comment not to invent one; RailRadar route detail is static schedule only. Only a single train-level delay is available. | `lib/data/railradar_mappers.dart`, `lib/models/live_position.dart` |
+| D2 | ~~**No per-station actual or delay times exist.**~~ **SUPERSEDED — see D2a.** The original finding was correct about RailRadar, but wrong to generalise from it. | `lib/data/railradar_mappers.dart`, `lib/models/live_position.dart` |
+| D2a | **Per-station actual times DO exist, from RailKit `trackTrain` only.** Each `timeline` entry with `type: "stoppage"` carries `arrival: {scheduled, actual, delay}` and `departure: {...}`, plus `status: "passed" \| "current" \| "upcoming"`. RailRadar remains schedule-only, so D2 still holds for that source. The app previously discarded all of it, collapsing the whole timeline into one aggregate int. | railkit v4.0.1 published `trackTrain` response; corroborated by the timeline walk in `liveStatusFromRailkitTrack` |
+| D2b | **What `actual` means for an *upcoming* stoppage is undocumented.** RailKit publishes a `passed` stoppage and a `current` intermediate, but no upcoming stoppage, so `actual` before arrival could be an ETA, an echo of scheduled, or empty. Unresolved and unresolvable without a live call. | absence of any upcoming-stoppage example in the SDK docs |
 | D3 | The timeline has **no quota-aware platform fetch**. `_kAutoPlatformLookups` lives in `train_results_screen.dart`. The timeline reads static `Station.platform`, which RailRadar already populates per halt. The reusable fetch is `stationPlatformProvider` (one `getTrainInfo` per train, 24h server cache). | `lib/widgets/station_tile.dart`, `lib/data/train_platform_provider.dart` |
 
 ### Non-goals
@@ -33,9 +35,14 @@ that does not exist.
 - **Interpolated between-station motion.** Deriving `segmentProgress` from clock
   time against scheduled arrival/departure is deferred to a future task
   (see Requirement 12). This pass ships honest jump-on-poll movement.
-- **Per-station actual times.** Not available from either API (D2). Not faked.
-- **Changes to `tracking_controller.dart`.** The position pipeline is consumed
-  as-is; this spec adds no new position-calculation path.
+- ~~**Per-station actual times.**~~ **NO LONGER A NON-GOAL.** Deferred task D.1
+  was reopened and implemented once D2a confirmed the data exists. Actuals are
+  now displayed for stations RailKit reports as passed or current. See
+  Requirement 4.3 as amended, and Requirement 13.
+- ~~**Changes to `tracking_controller.dart`.**~~ **NO LONGER A NON-GOAL.** The
+  controller now merges RailKit's per-station timeline onto the rendered route by
+  station code. It still adds no new *position*-calculation path — `fromIndex`
+  and `segmentProgress` are untouched.
 - **Platform values for pass-through stations.** A train that does not stop has
   no meaningful platform; the existing behaviour of omitting it is kept.
 
@@ -133,12 +140,18 @@ can plan without being misled by invented figures.
    and distance from origin.
 2. The system SHALL display the scheduled arrival and/or departure times already
    present on the `Station` model.
-3. GIVEN constraint D2, the system SHALL NOT display any value labelled
-   "actual". No per-station actual time SHALL be shown, derived, or implied.
+3. **AMENDED (was: no actual times at all).** GIVEN constraint D2a, WHEN RailKit
+   reports a station's `status` as `passed` or `current` AND supplies a parseable
+   `actual` time THEN the system SHALL display that actual time alongside the
+   scheduled one. GIVEN constraint D2b, WHEN a station's `status` is `upcoming`
+   THEN the system SHALL NOT display its `actual` value at all, because what that
+   field holds before arrival is undocumented and presenting it as observed could
+   certify a future station as on time on no evidence.
 4. WHEN a train-level delay is reported AND a station lies ahead of the train
    THEN the system MAY display a projected time computed as scheduled time plus
    the train-level delay, and WHEN it does so THEN that value SHALL be
-   explicitly labelled as projected.
+   explicitly marked as an estimate and SHALL NOT be coloured as on-time —
+   an estimate cannot certify punctuality.
 5. WHEN a delay is displayed THEN the system SHALL use the existing
    `AppColors.delayed` token and SHALL NOT introduce a new warning colour.
 6. WHEN no delay is reported THEN the system SHALL show scheduled times in the
@@ -313,6 +326,43 @@ between stations rather than jump, but not at the cost of a fabricated position.
    that when the controller begins supplying a real value the marker moves
    between stations with no change to the widget.
 3. The deferred work SHALL be recorded so it is not lost.
+
+---
+
+---
+
+## Requirement 13 — Dual time columns and the solid track bar
+
+**User story:** As a passenger, I want each station to show what was scheduled
+next to what actually happened, colour-coded, so I can see at a glance where the
+train lost time.
+
+Added after the track visual was reversed a second time — see design.md section 2.
+
+### Acceptance criteria
+
+1. Each station row SHALL be laid out in three columns: arrival times on the
+   left, the track bar and station identity in the centre, departure times on the
+   right.
+2. Each time column SHALL show the scheduled time in a neutral treatment, and
+   beneath it the actual time when one is available.
+3. WHEN an actual time is at least **5 minutes** later than its scheduled time
+   THEN it SHALL be rendered in `AppColors.delayed`, and otherwise — including
+   when early — in `AppColors.onTime`. Five minutes is a product decision:
+   below it, station-clock granularity and rounding dominate.
+4. The verdict SHALL be computed from the scheduled and actual clock times, so
+   the colour can never contradict the two values displayed. RailKit's own
+   `delay` label SHALL be used only when the times cannot be parsed.
+5. The track SHALL be a single solid bar in one flat colour with a filled dot per
+   station. It SHALL NOT encode passed/active/upcoming state, because the time
+   columns now carry that signal and two systems expressing the same thing is
+   what made the previous treatment unreadable.
+6. WHERE RailKit reports no timing for a station — its timeline is stoppage-only
+   while the rendered route includes pass-through points — that station SHALL
+   degrade to scheduled-only. Degradation SHALL be per station, never per screen.
+7. Station dots SHALL be vertically aligned with the station-name line, and
+   consecutive stations SHALL be separated by a generous fixed gap in addition to
+   the proportional distance spacing.
 
 ---
 

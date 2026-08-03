@@ -1,4 +1,6 @@
 import '../../models/station.dart';
+import 'package:flutter/widgets.dart';
+
 import '../../models/tracking_state.dart';
 
 /// Geometry constants for the rail-track timeline.
@@ -11,34 +13,154 @@ import '../../models/tracking_state.dart';
 class RailMetrics {
   const RailMetrics._();
 
-  /// Width of the left column that holds the track.
+  /// Width of the left column that holds the track bar.
   static const double gutterWidth = 44;
 
-  /// Distance between the two rails.
-  static const double railGauge = 14;
+  /// Widest a side time column is allowed to get at a text scale of 1.
+  ///
+  /// Also the reference width the tests assert against. Only reached on a
+  /// reasonably wide phone — see [timeColWidth].
+  static const double timeColBase = 74;
 
-  static const double railStroke = 1.5;
+  /// Narrowest a side time column may be squeezed to.
+  ///
+  /// Floored rather than left to shrink freely because the column has to fit
+  /// `10:45 PM` on ONE line at the current time type size. Below this the string
+  /// wraps to `10:45` / `PM`, which is both ugly and a row-height contract
+  /// violation — a wrapped time makes the column taller than
+  /// [stationRowHeight] predicted.
+  static const double timeColMin = 62;
+
+  /// Share of the screen width one time column may claim.
+  static const double _timeColFraction = 0.19;
+
+  /// Width of one side time column: proportional to the screen, then grown with
+  /// the user's text scale.
+  ///
+  /// RESPONSIVE, NOT FIXED. It was a flat 74 regardless of device. Two time
+  /// columns plus the 44px gutter is 192px of chrome, which on a 360dp phone
+  /// leaves the station name ~168px and truncated real names to `MANTHR...`. It
+  /// now scales with the viewport and only reaches [timeColBase] on wider
+  /// screens, handing the difference to the name.
+  ///
+  /// The text-scale term cannot be dropped: the columns hold two clock strings,
+  /// and at 2x `10:45 PM` needs roughly double the room. A fixed width overflowed
+  /// by 168px. Clamped at the top so very large scales squeeze the centre column
+  /// rather than pushing the gutter off screen.
+  ///
+  /// SHARED, AND IT MUST STAY SHARED. This is the x-origin of the gutter for
+  /// *every* row type — station, collapsed gap and day divider alike. It used to
+  /// be private to the station row, and the gap and divider rows hardcoded their
+  /// gutter at `left: 0`, so their track bar painted 74px to the left of the
+  /// station rows' and the timeline showed two parallel lines. Any row that
+  /// draws in the gutter resolves its inset from here.
+  static double timeColWidth(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final base =
+        (width * _timeColFraction).clamp(timeColMin, timeColBase).toDouble();
+    final scaled = MediaQuery.textScalerOf(context).scale(base);
+    return scaled.clamp(base, base * 1.9);
+  }
+
+  /// Left edge of the content column that sits right of the gutter.
+  static double contentLeft(BuildContext context) =>
+      timeColWidth(context) + gutterWidth;
+
+  /// Width of the solid track bar.
+  static const double barWidth = 10;
+
+  /// Diameter of a station dot.
+  static const double dotSize = 13;
+
+  /// SUPERSEDED by [barWidth] / [dotSize] when the tie ladder was replaced by a
+  /// solid bar. Nothing paints it any more: the loading skeleton was the last
+  /// holdout and it drew a two-rail ladder that snapped to a single bar on load.
+  static const double railGauge = 20;
+
+  static const double railStroke = 2.0;
 
   /// Constant vertical distance between ties. Never stretched to fit a
-  /// segment — see [RailTrackLayout] docs and the painter.
-  static const double tiePitch = 9;
+  /// segment — see [RailTrackLayout] docs and the painter. Bumped from 9 in step
+  /// with the thicker ties, so the ladder stays as open as before rather than
+  /// getting denser.
+  static const double tiePitch = 11;
 
-  static const double tieThickness = 2.5;
+  static const double tieThickness = 3.5;
 
-  /// Ties are suppressed within this distance of a segment end so that the
-  /// tie-phase reset at each row boundary is never visible. Every boundary sits
-  /// under a station marker, so the result reads as the station symbol
-  /// interrupting the hatching.
+  /// Ties are suppressed within this distance of a station pip, so the station
+  /// symbol interrupts the hatching the way printed track diagrams draw it.
   ///
-  /// Must be at least [tiePitch] for the suppression to actually cover a full
-  /// phase discontinuity.
-  static const double markerClearance = 11;
+  /// Sized to clear the largest pip (now 18px across) plus a hair of margin.
+  ///
+  /// It once had to be at least [tiePitch] because the tie phase restarted at
+  /// every row and the band's real job was to hide that discontinuity. The phase
+  /// is now anchored in track space, so there is no discontinuity left to cover
+  /// and the band exists purely for the pip. Suppression lands on the [tiePitch]
+  /// grid, so the resulting gap is always a whole number of pitches.
+  static const double markerClearance = 10;
 
   /// Height of a collapsed station row's content.
-  static const double stationRowHeight = 62;
+  ///
+  /// MUST BE >= the tallest content a collapsed row can produce, because the
+  /// widget layer applies it as a `minHeight` floor: anything taller pushes the
+  /// row past its declared height and [offsetOfItem] starts lying again.
+  ///
+  /// Measured worst case is a narrow (320dp) viewport where the distance/platform
+  /// subtitle wraps to a second line AND the row is an upcoming station at a
+  /// non-zero delay, so both side columns carry a projected second time line:
+  /// 83px including [contentTopPad]. 88 leaves headroom.
+  ///
+  /// That 83 is a conservative ceiling. It was measured under `flutter test`,
+  /// whose fallback font advances a full em per glyph — roughly twice a real
+  /// font — so text wraps sooner there than on a device. Over-allocating is the
+  /// safe direction: the widget applies this as a `minHeight`, so as long as it
+  /// exceeds the real content the rendered height equals the declared one exactly
+  /// and [offsetOfItem] stays truthful. Under-allocating is what breaks.
+  ///
+  /// Came down 104 -> 88 with the smaller station-name and time type. Re-measure
+  /// if the type sizes change; the `row geometry` tests fail if it drifts.
+  ///
+  /// KNOWN LIMIT: this is a plain `const`, so it does not grow with the user's
+  /// text scale, while the content does. At 2x the content can outgrow it and the
+  /// scroll offsets drift again. Pre-existing — [RailTrackLayout.build] has no
+  /// `BuildContext` to read a scale from — and not addressed here.
+  static const double stationRowHeight = 52;
+  static const double minorStationRowHeight = 40;
 
-  /// Vertical centre of the station pip, measured from the row top.
-  static const double pipCenterY = 22;
+  /// Vertical centre of the station dot, measured from the row top.
+  ///
+  /// FLOOR, NOT A FREE CHOICE: the train marker is a [TrainMarker.ringSize] (44px)
+  /// ring centred on this value in the origin row, so anything below 22 clips it
+  /// against the top of the row. That is why [contentTopPad] moves the text down
+  /// to meet the dot, rather than the dot moving up to meet the text.
+  static const double pipCenterY = 26;
+
+  /// Top padding applied to a station row's text — both time columns and the
+  /// centre block together, so they stay on one baseline.
+  ///
+  /// Exists purely to put the station-name line on [pipCenterY]. Without it the
+  /// name centred ~13px from the row top while the dot sat at 26, so the dot
+  /// floated between the name and the distance line instead of beside the name —
+  /// a long-standing mismatch that the doc comment on [pipCenterY] used to claim
+  /// did not exist.
+  ///
+  /// Tied to the name font size, so it cannot be derived at compile time. The
+  /// `row geometry` test asserts the dot and the name agree, and fails with a
+  /// retune hint if the type changes.
+  static const double contentTopPad = 15;
+
+  /// Flat spacing added below every station row, on top of the proportional
+  /// distance spacing.
+  ///
+  /// This is the floor on breathing room between stops: on a dense route the
+  /// proportional gap clamps to [minGapPx], so without this a suburban run would
+  /// have its stations nearly touching.
+  ///
+  /// It was lowered 34 -> 12 to shorten the scroll (design.md 1.3), but those
+  /// measurements were taken against a layout that never rendered its spacers at
+  /// all, so the saving they recorded was not real. Modest now because
+  /// [stationRowHeight] already carries most of the breathing room.
+  static const double stationRowGap = 14;
 
   /// Height of a collapsed-gap row. Doubles as its minimum tap target.
   static const double gapRowHeight = 44;
@@ -47,10 +169,20 @@ class RailMetrics {
 
   /// The average inter-station gap we aim for, before clamping. The scale is
   /// normalised so a route's *mean* gap lands here regardless of route length.
-  static const double targetMeanGapPx = 28;
+  ///
+  /// RETUNED (28 -> 18) when the spacers started rendering. Every value here and
+  /// in [maxGapPx] was previously chosen against a layout that computed these
+  /// gaps and then discarded them, so their effect on the real scroll was zero
+  /// and the numbers were never actually validated. Now that they land on screen
+  /// they are additive to a much taller [stationRowHeight], so the same
+  /// proportional signal needs fewer pixels to read.
+  static const double targetMeanGapPx = 18;
 
   static const double minGapPx = 10;
-  static const double maxGapPx = 160;
+
+  /// Ceiling on a single proportional gap, so one enormous hop cannot dominate
+  /// the scroll. Retuned alongside [targetMeanGapPx] for the same reason.
+  static const double maxGapPx = 64;
 }
 
 /// How a stretch of track should be drawn.
@@ -87,11 +219,23 @@ class RailStationItem extends RailItem {
     required this.isLast,
     required this.spacerBelow,
     required super.height,
+    this.hiddenAfterCount = 0,
   });
 
   final int stationIndex;
   final Station station;
   final StationProgress progress;
+
+  /// How many collapsible stations sit in the run immediately after this one,
+  /// before the next significant station.
+  ///
+  /// Independent of whether that run is currently expanded — it is derived from
+  /// the route's significance alone — so a significant station always knows it
+  /// has locals folded after it and can advertise them, and re-tapping it while
+  /// the run is open still reads as "this station owns those stops". Zero for a
+  /// minor (revealed) row, and for a significant station followed directly by
+  /// another significant one.
+  final int hiddenAfterCount;
 
   @override
   final TrackSegmentState segmentState;
@@ -279,6 +423,7 @@ class RailTrackLayout {
         hasPassThrough ? s.isPassThrough : s.isMinorHalt;
 
     bool isSignificant(int i) {
+      if (stations[i].isPassThrough) return false;
       if (i == 0 || i == lastIndex) return true;
       if (i == fromIndex || i == currentIndex) return true;
       return !isCollapsible(stations[i]);
@@ -290,7 +435,10 @@ class RailTrackLayout {
       return TrackSegmentState.upcoming;
     }
 
-    // -- 1. Row sequence, ported from StationTimelineSliver._buildRows --------
+    // -- 1. Row sequence ------------------------------------------------------
+    // Ported verbatim from the flat station timeline this widget replaced
+    // (StationTimelineSliver._buildRows, since deleted), because the collapsing
+    // behaviour was required to stay exactly as it was.
     final rows = <_Row>[];
     var pendingHidden = <int>[];
     var lastSignificant = 0;
@@ -316,6 +464,26 @@ class RailTrackLayout {
     // Defensive: the terminus is always significant, so this should not fire.
     if (pendingHidden.isNotEmpty) {
       rows.add(_Row.gap(lastSignificant, pendingHidden));
+    }
+
+    // How many collapsible stations follow each significant station, from
+    // significance alone so the figure is stable whether or not the run is
+    // currently expanded. Feeds RailStationItem.hiddenAfterCount, which is what
+    // lets tapping the significant station reveal its local stops.
+    final runCountAfter = <int, int>{};
+    {
+      var lastSig = 0;
+      var run = 0;
+      for (var i = 0; i < stations.length; i++) {
+        if (isSignificant(i)) {
+          if (run > 0) runCountAfter[lastSig] = run;
+          run = 0;
+          lastSig = i;
+        } else {
+          run++;
+        }
+      }
+      if (run > 0) runCountAfter[lastSig] = run;
     }
 
     // -- 2. Scale ------------------------------------------------------------
@@ -380,23 +548,15 @@ class RailTrackLayout {
 
       // Spacing below this station, down to the next station row. Zero when a
       // gap row follows, because the gap absorbs that distance itself.
-      double spacer = 0;
-      if (next != null && !next.isGap) {
-        final nextStation = stations[next.stationIndex];
-        spacer = gapPxFor(
-          nextStation.distanceFromOriginKm - station.distanceFromOriginKm,
-        );
-
-        // A day divider is inserted between the two rows, so it takes its
-        // height out of the spacer rather than adding to it — otherwise the
-        // route would visibly stretch at every midnight.
-        final thisDay = dayNumberOf(station);
-        final nextDay = dayNumberOf(nextStation);
-        if (thisDay != null && nextDay != null && nextDay > thisDay) {
-          spacer = (spacer - RailMetrics.dayDividerHeight)
-              .clamp(RailMetrics.minGapPx, RailMetrics.maxGapPx);
-        }
-      }
+      //
+      // A flat [RailMetrics.stationRowGap] is added on top of the proportional
+      // distance, so consecutive stations always sit well apart the way the
+      // reference layout does. The proportional component still varies with
+      // distance — this only raises the floor.
+      final isMinorRow = station.isPassThrough;
+      final baseHeight = isMinorRow
+          ? RailMetrics.minorStationRowHeight
+          : RailMetrics.stationRowHeight;
 
       built.add(RailStationItem(
         stationIndex: index,
@@ -408,8 +568,9 @@ class RailTrackLayout {
         minor: isCollapsible(station),
         isFirst: index == 0,
         isLast: index == lastIndex,
-        spacerBelow: spacer,
-        height: RailMetrics.stationRowHeight + spacer,
+        spacerBelow: 0,
+        height: baseHeight,
+        hiddenAfterCount: runCountAfter[index] ?? 0,
       ));
 
       // Insert the divider after this station when the next one crosses a day

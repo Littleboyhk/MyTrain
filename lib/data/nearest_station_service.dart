@@ -1,29 +1,30 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../models/geo_point.dart';
 import '../models/rail_station.dart';
+import 'station_coords.dart';
 import 'station_repository.dart';
 
-/// Finds the railway station closest to the user's current position.
+/// Finds the railway stations closest to the user's current position.
 ///
-/// COORDINATES: `assets/data/stations.json` carries only `{code, name}`, so the
-/// nearest-station lookup needs a second asset, `assets/data/station_coords.json`
-/// — a compact `{ CODE: [lat, lng] }` map built from the same DataMeet Indian
-/// Railways open dataset the station list itself came from (its first entry,
-/// BDHL/Badhal, matches feature #1 of the source exactly).
-///
+/// COORDINATES come from [StationCoords], the single shared reader of
+/// `assets/data/station_coords.json` — a `{ CODE: [lat, lng] }` map built from
+/// the same DataMeet Indian Railways open dataset as the station list itself.
 /// Coverage is 8,697 of 8,989 codes (96.8%); the remaining 293 have no geometry
-/// in the source. Those stations simply can't win the nearest match — they are
-/// never guessed at.
+/// in the source, so they can never win a match and are never guessed at.
 ///
-/// Everything is local: no network call, no API quota, works offline once the
-/// asset is loaded.
+/// DISTANCES come from [GeoPoint.distanceKmTo]. This file previously carried its
+/// own copy of the asset parser and its own haversine with a duplicate earth
+/// radius; both are gone. One dataset, one formula, one constant — shared with
+/// the offline map-matching in `lib/data/offline/`, so a distance shown on the
+/// home screen and a distance used to place a train agree by construction.
+///
+/// Everything is local: no network call, no API quota, works with the radio off
+/// once the asset has been read.
 enum NearestStationError {
   /// Device location services are switched off.
   locationServiceOff,
@@ -43,27 +44,43 @@ enum NearestStationError {
   unknown,
 }
 
+/// One station and how far away it is.
+class NearbyStation {
+  const NearbyStation({required this.station, required this.distanceKm});
+
+  final RailStation station;
+  final double distanceKm;
+
+  /// "480 m" / "3.2 km" / "47 km".
+  String get distanceLabel => distanceKm < 1
+      ? '${(distanceKm * 1000).round()} m'
+      : '${distanceKm.toStringAsFixed(distanceKm < 10 ? 1 : 0)} km';
+}
+
 sealed class NearestStationResult {
   const NearestStationResult();
 }
 
 class NearestStationFound extends NearestStationResult {
   const NearestStationFound({
-    required this.station,
-    required this.distanceKm,
+    required this.nearby,
     required this.accuracyM,
   });
 
-  final RailStation station;
-  final double distanceKm;
+  /// Stations in range, nearest first. Never empty — an empty result is a
+  /// [NearestStationFailure] with [NearestStationError.noStationNearby].
+  final List<NearbyStation> nearby;
 
   /// GPS accuracy of the fix used, for honesty about precision.
   final double? accuracyM;
 
-  /// "1.2 km" / "480 m".
-  String get distanceLabel => distanceKm < 1
-      ? '${(distanceKm * 1000).round()} m'
-      : '${distanceKm.toStringAsFixed(distanceKm < 10 ? 1 : 0)} km';
+  /// The closest station. Kept as a named getter because it is what the pill
+  /// shows, and because it reads better than `nearby.first.station`.
+  RailStation get station => nearby.first.station;
+
+  double get distanceKm => nearby.first.distanceKm;
+
+  String get distanceLabel => nearby.first.distanceLabel;
 }
 
 class NearestStationFailure extends NearestStationResult {
@@ -79,43 +96,74 @@ class NearestStationFailure extends NearestStationResult {
 }
 
 class NearestStationService {
-  const NearestStationService(this._ref);
+  NearestStationService(this._ref);
 
   final Ref _ref;
 
   static const Duration _serviceCheckTimeout = Duration(seconds: 6);
   static const Duration _permissionTimeout = Duration(seconds: 20);
-  static const Duration _fixTimeout = Duration(seconds: 15);
+
+  /// Bounded so the pill can never spin indefinitely.
+  static const Duration _fixTimeout = Duration(seconds: 10);
 
   /// Beyond this the "nearest station" is not useful information.
   static const double _maxUsefulKm = 150;
 
-  /// Parsed once per app run; ~222 KB of JSON.
-  static Map<String, List<double>>? _coords;
+  /// How many stations the nearby list carries. Enough to fill a sheet without
+  /// listing every halt in the district.
+  static const int maxResults = 12;
 
-  static Future<Map<String, List<double>>> _loadCoords() async {
-    final cached = _coords;
-    if (cached != null) return cached;
-    final raw = await rootBundle.loadString('assets/data/station_coords.json');
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    final out = <String, List<double>>{};
-    for (final entry in decoded.entries) {
-      final v = entry.value;
-      if (v is! List || v.length < 2) continue;
-      final lat = (v[0] as num).toDouble();
-      final lng = (v[1] as num).toDouble();
-      out[entry.key.toUpperCase()] = <double>[lat, lng];
-    }
-    _coords = out;
-    return out;
+  /// How long a position fix stays good enough to reuse.
+  ///
+  /// This is what stops a tap immediately followed by a long-press from asking
+  /// the device for two fixes back to back: the second gesture reuses the first
+  /// gesture's position. A train moves, so the window is deliberately short.
+  static const Duration fixTtl = Duration(seconds: 60);
+
+  Position? _cachedFix;
+  DateTime? _cachedFixAt;
+
+  /// True when a fresh fix is already in hand, so a caller can offer the nearby
+  /// list without any location work at all.
+  bool get hasFreshFix {
+    final at = _cachedFixAt;
+    return _cachedFix != null &&
+        at != null &&
+        DateTime.now().difference(at) < fixTtl;
   }
 
-  /// Asks for location, then returns the closest station.
+  /// Asks for location, then returns the stations closest to it.
   ///
-  /// Permission is requested ONLY here — never at app launch — so it's always
-  /// tied to the user tapping "Nearest Station".
-  Future<NearestStationResult> find() async {
-    // 1) Location services + permission.
+  /// Permission is requested ONLY here — never at app launch — so it is always
+  /// tied to the user tapping the pill.
+  ///
+  /// [forceRefresh] skips the cached fix when a caller genuinely wants a new
+  /// reading rather than a repeat of the last one.
+  Future<NearestStationResult> find({bool forceRefresh = false}) async {
+    final Position position;
+
+    if (!forceRefresh && hasFreshFix) {
+      position = _cachedFix!;
+      debugPrint('[NearestStation] reusing fix from '
+          '${DateTime.now().difference(_cachedFixAt!).inSeconds}s ago');
+    } else {
+      final gate = await _ensureLocation();
+      if (gate != null) return gate;
+
+      final fix = await _currentPosition();
+      if (fix is NearestStationFailure) return fix;
+      position = (fix as _Fix).position;
+
+      _cachedFix = position;
+      _cachedFixAt = DateTime.now();
+    }
+
+    return _resolve(position);
+  }
+
+  /// Location services + permission. Returns a failure to hand straight back, or
+  /// null when everything is in order.
+  Future<NearestStationFailure?> _ensureLocation() async {
     try {
       final on = await Geolocator.isLocationServiceEnabled()
           .timeout(_serviceCheckTimeout);
@@ -139,6 +187,7 @@ class NearestStationService {
           'Location access is needed to find the nearest station.',
         );
       }
+      return null;
     } on TimeoutException {
       return const NearestStationFailure(
         NearestStationError.unknown,
@@ -151,16 +200,17 @@ class NearestStationService {
         'Location isn\'t available on this device.',
       );
     }
+  }
 
-    // 2) Position.
-    Position pos;
+  /// One position fix, or the failure to report instead.
+  Future<Object> _currentPosition() async {
     try {
-      pos = await Geolocator.getCurrentPosition(
+      return _Fix(await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.medium, // plenty to pick a station
           timeLimit: _fixTimeout,
         ),
-      ).timeout(_fixTimeout);
+      ).timeout(_fixTimeout));
     } on TimeoutException {
       return const NearestStationFailure(
         NearestStationError.noFix,
@@ -173,45 +223,52 @@ class NearestStationService {
         'Couldn\'t get your location.',
       );
     }
+  }
 
-    // 3) Nearest station from local data.
+  /// Rank the local dataset against [position].
+  Future<NearestStationResult> _resolve(Position position) async {
     try {
-      final coords = await _loadCoords();
-      final repo = await _ref.read(stationRepositoryProvider.future);
-
-      String? bestCode;
-      var bestKm = double.infinity;
-      for (final entry in coords.entries) {
-        final km = _haversineKm(
-          pos.latitude,
-          pos.longitude,
-          entry.value[0],
-          entry.value[1],
+      final coords = await StationCoords.tryLoad();
+      if (coords.isEmpty) {
+        return const NearestStationFailure(
+          NearestStationError.dataUnavailable,
+          'Station location data couldn\'t be loaded.',
         );
-        if (km < bestKm) {
-          bestKm = km;
-          bestCode = entry.key;
-        }
       }
 
-      if (bestCode == null || bestKm > _maxUsefulKm) {
+      final here = GeoPoint(position.latitude, position.longitude);
+      final repo = await _ref.read(stationRepositoryProvider.future);
+
+      final ranked = <NearbyStation>[];
+      for (final entry in coords.entries) {
+        final km = here.distanceKmTo(entry.value);
+        if (km > _maxUsefulKm) continue;
+        ranked.add(NearbyStation(
+          station: repo.byCode(entry.key) ??
+              RailStation(code: entry.key, name: entry.key),
+          distanceKm: km,
+        ));
+      }
+
+      if (ranked.isEmpty) {
         return const NearestStationFailure(
           NearestStationError.noStationNearby,
           'No railway station found near you.',
         );
       }
 
-      final station = repo.byCode(bestCode) ??
-          RailStation(code: bestCode, name: bestCode);
+      ranked.sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+      final top = ranked.take(maxResults).toList();
 
-      debugPrint('[NearestStation] ${station.code} ${station.name} '
-          '${bestKm.toStringAsFixed(2)} km (fix accuracy '
-          '${pos.accuracy.round()} m)');
+      debugPrint('[NearestStation] ${top.first.station.code} '
+          '${top.first.station.name} '
+          '${top.first.distanceKm.toStringAsFixed(2)} km '
+          '(fix accuracy ${position.accuracy.round()} m, '
+          '${ranked.length} within ${_maxUsefulKm.round()} km)');
 
       return NearestStationFound(
-        station: station,
-        distanceKm: bestKm,
-        accuracyM: pos.accuracy.isFinite ? pos.accuracy : null,
+        nearby: top,
+        accuracyM: position.accuracy.isFinite ? position.accuracy : null,
       );
     } catch (e) {
       debugPrint('[NearestStation] lookup failed: $e');
@@ -222,43 +279,44 @@ class NearestStationService {
     }
   }
 
-  /// Great-circle distance in km.
-  static double _haversineKm(
-    double aLat,
-    double aLng,
-    double bLat,
-    double bLng,
-  ) {
-    const earthKm = 6371.0088;
-    const deg = math.pi / 180;
-    final dLat = (bLat - aLat) * deg;
-    final dLng = (bLng - aLng) * deg;
-    final s1 = math.sin(dLat / 2);
-    final s2 = math.sin(dLng / 2);
-    final h = s1 * s1 +
-        math.cos(aLat * deg) * math.cos(bLat * deg) * s2 * s2;
-    return 2 * earthKm * math.asin(math.min(1, math.sqrt(h)));
+  /// Exposed for tests: ranking against an arbitrary point, no GPS involved.
+  @visibleForTesting
+  static Future<List<NearbyStation>> rankedFrom(
+    double lat,
+    double lng, {
+    int limit = maxResults,
+    StationRepository? repo,
+  }) async {
+    final coords = await StationCoords.tryLoad();
+    final here = GeoPoint(lat, lng);
+    final out = <NearbyStation>[];
+    for (final e in coords.entries) {
+      out.add(NearbyStation(
+        station: repo?.byCode(e.key) ?? RailStation(code: e.key, name: e.key),
+        distanceKm: here.distanceKmTo(e.value),
+      ));
+    }
+    out.sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+    return out.take(limit).toList();
   }
 
-  /// Exposed for tests: nearest station to an arbitrary point, no GPS involved.
+  /// Exposed for tests: the single nearest station to a point.
   @visibleForTesting
   static Future<({String code, double km})?> nearestTo(
     double lat,
     double lng,
   ) async {
-    final coords = await _loadCoords();
-    String? bestCode;
-    var bestKm = double.infinity;
-    for (final e in coords.entries) {
-      final km = _haversineKm(lat, lng, e.value[0], e.value[1]);
-      if (km < bestKm) {
-        bestKm = km;
-        bestCode = e.key;
-      }
-    }
-    if (bestCode == null) return null;
-    return (code: bestCode, km: bestKm);
+    final ranked = await rankedFrom(lat, lng, limit: 1);
+    if (ranked.isEmpty) return null;
+    return (code: ranked.first.station.code, km: ranked.first.distanceKm);
   }
+}
+
+/// Internal wrapper so [NearestStationService._currentPosition] can return
+/// either a position or a failure without a nullable-plus-error-out-param dance.
+class _Fix {
+  const _Fix(this.position);
+  final Position position;
 }
 
 final nearestStationServiceProvider = Provider<NearestStationService>(

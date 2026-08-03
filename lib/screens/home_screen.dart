@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,7 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../data/language_controller.dart';
 import '../data/nearest_station_service.dart';
 import '../data/recent_trains_service.dart';
+import '../data/train_number_lookup_provider.dart';
 import '../data/train_repository.dart';
 import '../l10n/app_localizations.dart';
 import '../models/rail_station.dart';
@@ -20,6 +23,7 @@ import '../widgets/glass_surface.dart';
 import '../widgets/language_picker_sheet.dart';
 import '../widgets/liquid_glass_button.dart';
 import '../widgets/mesh_background.dart';
+import '../widgets/nearby_stations_sheet.dart';
 import '../widgets/train_number_tag.dart';
 import 'live_tracking_screen.dart';
 import 'pnr_status_screen.dart';
@@ -80,7 +84,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   RailStation? _nearestStation;
   String? _nearestDistance;
   bool _locatingNearest = false;
+
+  /// Why the last lookup failed, so the pill can say something useful instead of
+  /// silently reverting to its default label.
+  NearestStationError? _nearestFailure;
+
+  /// The last successful lookup, handed to the nearby sheet so a hold straight
+  /// after a tap does not trigger a second location request.
+  NearestStationFound? _lastNearestResult;
+
+  /// How long the pill must be held to open the nearby list.
+  ///
+  /// NOTE: 3s is roughly six times the platform norm for a long press (~500ms),
+  /// which is long enough that it reads as "nothing happened" without feedback —
+  /// hence the determinate progress ring the pill shows while held. Change this
+  /// one constant to retune it.
+  static const Duration _holdToOpenList = Duration(seconds: 3);
+
+  Timer? _holdTimer;
+
+  /// Set when the hold completed, so the release does not ALSO run the tap
+  /// action. This is what keeps one interaction to one outcome.
+  bool _holdFired = false;
+
+  /// Drives the hold progress ring.
+  bool _holding = false;
+
+  /// What is currently typed. Filters the local catalog live, and never more
+  /// than that — typing costs nothing.
   String _numberQuery = '';
+
+  /// The number the user actually SUBMITTED, once it was a complete valid train
+  /// number. Empty otherwise.
+  ///
+  /// This is the only thing in the screen that can cause a network lookup, which
+  /// is what keeps partial input like "163" off the wire.
+  String _submittedNumber = '';
 
   int _row1 = 0; // All Trains
   String? _row2; // no type filter
@@ -116,10 +155,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Train-number mode filters the list live as digits are typed.
+    // Train-number mode filters the LOCAL CATALOG live as digits are typed. It
+    // deliberately does not look anything up remotely — see _submitNumber.
     _numberCtrl.addListener(() {
       if (_numberCtrl.text != _numberQuery) {
-        setState(() => _numberQuery = _numberCtrl.text);
+        setState(() {
+          _numberQuery = _numberCtrl.text;
+          // Editing after a submit invalidates it, so a result can never sit
+          // under a number the user has since changed.
+          if (_submittedNumber.isNotEmpty &&
+              _numberCtrl.text.trim() != _submittedNumber) {
+            _submittedNumber = '';
+          }
+        });
       }
     });
     _maybeAskLanguage();
@@ -137,6 +185,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   void dispose() {
+    _holdTimer?.cancel();
     _numberCtrl.dispose();
     super.dispose();
   }
@@ -157,6 +206,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return _recentTrains.isNotEmpty;
   }
 
+  /// Locally-known trains for the current mode, with the category chips applied.
+  ///
+  /// A remote lookup result deliberately does NOT pass through here — see
+  /// [_applyChips].
   List<TrainSummary> get _visible {
     List<TrainSummary> list;
     if (_mode == _SearchMode.number) {
@@ -167,21 +220,60 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     } else {
       list = _recentTrains;
     }
+    return _applyChips(list);
+  }
 
-    // Category chips (Express/Superfast/…) refine whichever mode is active.
+  /// Category chips (Express/Superfast/…) refine locally-sourced lists only.
+  ///
+  /// They are not applied to a fresh remote lookup, because they filter on data
+  /// a one-off route lookup may not populate: `_tier` reads `TrainSummary.type`,
+  /// which RailRadar may leave blank, and a blank type tiers as "Passenger" —
+  /// so an Express chip would hide the very train the user just asked for.
+  ///
+  /// Worth knowing: `_isOnTime` is a hardcoded `true`, so the Delayed chip
+  /// currently empties EVERY list, catalog included. That predates this change
+  /// and is left alone here rather than silently altered.
+  List<TrainSummary> _applyChips(List<TrainSummary> list) {
     switch (_row2) {
       case 'Express':
-        list = list.where((t) => _tier(t) == 'Express').toList();
+        return list.where((t) => _tier(t) == 'Express').toList();
       case 'Superfast':
-        list = list.where((t) => _tier(t) == 'Superfast').toList();
+        return list.where((t) => _tier(t) == 'Superfast').toList();
       case 'Passenger':
-        list = list.where((t) => _tier(t) == 'Passenger').toList();
+        return list.where((t) => _tier(t) == 'Passenger').toList();
       case 'On Time':
-        list = list.where(_isOnTime).toList();
+        return list.where(_isOnTime).toList();
       case 'Delayed':
-        list = list.where((t) => !_isOnTime(t)).toList();
+        return list.where((t) => !_isOnTime(t)).toList();
     }
     return list;
+  }
+
+  /// True when the submitted number needs a remote lookup: the catalog does not
+  /// have it, so it is the only way to answer.
+  bool get _needsRemoteLookup =>
+      _mode == _SearchMode.number &&
+      _submittedNumber.isNotEmpty &&
+      trainRepository.resolveNumber(_submittedNumber) == null;
+
+  /// Submit handler for the train-number field.
+  ///
+  /// Requires a complete, valid 5-digit number before anything remote happens.
+  /// An incomplete entry just clears any previous submission and leaves the live
+  /// catalog filter as the only thing on screen.
+  void _submitNumber(String raw) {
+    final n = raw.trim();
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (!isValidIRTrainNumber(n)) {
+      if (_submittedNumber.isNotEmpty) {
+        setState(() => _submittedNumber = '');
+      }
+      return;
+    }
+
+    Haptics.tap();
+    setState(() => _submittedNumber = n);
   }
 
   String _listHeaderText(L10n t, int count) {
@@ -309,33 +401,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     setState(() => _navIndex = i);
   }
 
-  void _openBookingSheet() {
-    Haptics.tap();
-    showCupertinoModalPopup<void>(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: Text(L10n.of(ctx).bookSheetTitle),
-        message: const Text(
-          'Ticket booking happens on the official IRCTC portal.',
-        ),
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              _showToast(L10n.of(context).bookOpening);
-            },
-            child: const Text('Continue to IRCTC'),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          isDefaultAction: true,
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: Text(L10n.of(ctx).cancel),
-        ),
-      ),
-    );
-  }
-
   /// Brief slide-up + fade toast (not Material's slide-from-bottom SnackBar).
   void _showToast(String message) {
     final overlay = Overlay.of(context);
@@ -423,6 +488,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget _trackTab(GlassTheme g) {
     final trains = _visible;
     final searched = _hasSearched;
+    // Non-null only when a submitted number needs answering remotely. It owns
+    // its own loading / not-found / failed states, so the generic "no match"
+    // empty state must stand down while it is present.
+    final lookup = _needsRemoteLookup ? _lookupPanel(g) : null;
 
     return SafeArea(
       bottom: false,
@@ -463,15 +532,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           if (searched && trains.isNotEmpty)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 120),
+              padding: EdgeInsets.fromLTRB(18, 0, 18, lookup == null ? 120 : 8),
               sliver: SliverToBoxAdapter(child: _results(g, trains)),
+            ),
+          if (lookup != null)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 120),
+              sliver: SliverToBoxAdapter(child: lookup),
             )
           else if (searched && trains.isEmpty)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(18, 20, 18, 120),
               sliver: SliverToBoxAdapter(child: _emptyState(g)),
             )
-          else
+          else if (trains.isEmpty)
             const SliverPadding(
               padding: EdgeInsets.only(bottom: 120),
               sliver: SliverToBoxAdapter(child: SizedBox.shrink()),
@@ -552,57 +626,96 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(28, 0, 28, 120),
           child: GlassSurface(
-            radius: 26,
-            blur: 22,
+            radius: 28,
+            blur: 24,
             glow: true,
             padding: const EdgeInsets.all(28),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 66,
-                  height: 66,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: GlassTheme.accentViolet.withValues(alpha: 0.20),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: GlassTheme.accentViolet.withValues(alpha: 0.40),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '🚀',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'COMING SOON',
+                        style: TextStyle(
+                          color: GlassTheme.accentViolet,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  width: 70,
+                  height: 70,
                   decoration: BoxDecoration(
                     gradient: GlassTheme.accent,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
                         color: GlassTheme.accentIndigo.withValues(alpha: 0.5),
-                        blurRadius: 20,
+                        blurRadius: 22,
                         spreadRadius: -2,
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.book_online_rounded,
-                      size: 30, color: Colors.white),
+                  child: const Icon(
+                    Icons.confirmation_number_rounded,
+                    size: 32,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  L10n.of(context).bookTitle,
+                  'Ticket Booking',
                   style: TextStyle(
                     color: g.textPrimary,
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
+                    letterSpacing: -0.4,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  L10n.of(context).bookBody,
+                  'Direct IRCTC train ticket reservations and seat availability booking will be available right inside My Train in an upcoming update.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: g.textSecondary,
                     fontSize: 14,
-                    height: 1.4,
+                    height: 1.45,
                   ),
                 ),
-                const SizedBox(height: 22),
+                const SizedBox(height: 24),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: _openBookingSheet,
+                  onTap: () {
+                    Haptics.confirm();
+                    _showToast(
+                        'You will be notified when Ticket Booking goes live! 🔔');
+                  },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 22, vertical: 14),
+                        horizontal: 24, vertical: 14),
                     decoration: BoxDecoration(
                       gradient: GlassTheme.accent,
                       borderRadius: BorderRadius.circular(999),
@@ -614,13 +727,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         ),
                       ],
                     ),
-                    child: Text(
-                      L10n.of(context).bookCta,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.notifications_active_rounded,
+                            size: 18, color: Colors.white),
+                        SizedBox(width: 8),
+                        Text(
+                          'Notify Me When Available',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -647,35 +768,181 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (!mounted) return;
 
     switch (result) {
-      case NearestStationFound(:final station, :final distanceLabel):
+      case NearestStationFound():
         setState(() {
           _locatingNearest = false;
-          _nearestStation = station;
-          _nearestDistance = distanceLabel;
+          _nearestFailure = null;
+          _lastNearestResult = result;
+          _nearestStation = result.station;
+          _nearestDistance = result.distanceLabel;
         });
-        _showToast('Nearest station: ${station.name} '
-            '(${station.code}) · $distanceLabel away');
-      case NearestStationFailure(:final message):
-        setState(() => _locatingNearest = false);
+      case NearestStationFailure(:final error, :final message):
+        setState(() {
+          _locatingNearest = false;
+          _nearestFailure = error;
+          _lastNearestResult = null;
+        });
+        // The pill carries a short version; the toast carries the detail.
         _showToast(message);
     }
+  }
+
+  // -------- Nearest-station pill gestures --------
+  //
+  // Tap and hold are separated with an explicit timer rather than
+  // `GestureDetector.onLongPress`, for two reasons: `onLongPress` fires at a
+  // fixed ~500ms with no way to set a duration, and releasing after a long press
+  // still delivers a tap — so a naive wiring would run BOTH actions on one
+  // interaction. The [_holdFired] flag is what prevents that.
+
+  void _onPillPressDown() {
+    _holdFired = false;
+    _holdTimer?.cancel();
+    setState(() => _holding = true);
+
+    _holdTimer = Timer(_holdToOpenList, () {
+      _holdFired = true;
+      if (!mounted) return;
+      setState(() => _holding = false);
+      _openNearbyStations();
+    });
+  }
+
+  void _onPillPressUp() {
+    _holdTimer?.cancel();
+    if (mounted) setState(() => _holding = false);
+    // The hold already acted on this interaction — a release must not run the
+    // tap action on top of it.
+    if (_holdFired) return;
+    _findNearestStation();
+  }
+
+  void _onPillPressCancel() {
+    _holdTimer?.cancel();
+    if (mounted) setState(() => _holding = false);
+  }
+
+  /// Opens the nearby-stations list and applies whatever the user picks.
+  ///
+  /// The picked station becomes the ORIGIN. "Nearest station" means where the
+  /// user is standing, which is where a journey starts — and it matches what
+  /// `_pickStation(true)` already does with a station chosen from the picker, so
+  /// there is one selection behaviour rather than two.
+  Future<void> _openNearbyStations() async {
+    Haptics.confirm();
+
+    // Hand over the existing fix only while it is still current; past the
+    // service's TTL the sheet acquires a new one rather than showing distances
+    // measured from where the user used to be.
+    final service = ref.read(nearestStationServiceProvider);
+    final reusable = service.hasFreshFix ? _lastNearestResult : null;
+
+    final picked = await showNearbyStationsSheet(context, initial: reusable);
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      _mode = _SearchMode.route;
+      _fromStation = picked;
+      // Selecting the station you are standing at also answers the pill.
+      _nearestStation = picked;
+      _nearestFailure = null;
+    });
+    _showToast('Origin set to ${picked.name} (${picked.code})');
+  }
+
+  /// The pill's leading indicator: a spinner while locating, a filling ring
+  /// while held, otherwise the location pin.
+  ///
+  /// The ring is what makes a 3-second hold usable. Without it the press reads as
+  /// a dead tap for three seconds and users let go before it fires.
+  Widget _pillLeading() {
+    if (_locatingNearest) {
+      return const SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation(GlassTheme.accentViolet),
+        ),
+      );
+    }
+
+    if (_holding) {
+      // Fills over exactly the hold duration, so the ring completing and the
+      // sheet opening are the same moment.
+      return TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0, end: 1),
+        duration: _holdToOpenList,
+        curve: Curves.linear,
+        builder: (context, t, _) => SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(
+            value: t,
+            strokeWidth: 2,
+            backgroundColor: GlassTheme.accentViolet.withValues(alpha: 0.22),
+            valueColor:
+                const AlwaysStoppedAnimation(GlassTheme.accentViolet),
+          ),
+        ),
+      );
+    }
+
+    return const Icon(Icons.location_on_rounded,
+        size: 15, color: GlassTheme.accentViolet);
+  }
+
+  /// What the pill says right now.
+  String _pillLabel(BuildContext context) {
+    if (_locatingNearest) return 'Locating…';
+    if (_holding) return 'Hold for nearby…';
+
+    final station = _nearestStation;
+    if (station != null) return '${station.name} (${station.code})';
+
+    return switch (_nearestFailure) {
+      // A retry is genuinely worth trying again — the fix simply didn't arrive.
+      NearestStationError.noFix => 'Signal weak — retry',
+      NearestStationError.noStationNearby => 'No station nearby',
+      // Permission and services-off both resolve the same way from here: tap to
+      // ask again. The toast already explained which one it was.
+      NearestStationError.permissionDenied ||
+      NearestStationError.locationServiceOff =>
+        'Tap to find station',
+      NearestStationError.dataUnavailable ||
+      NearestStationError.unknown =>
+        'Tap to find station',
+      null => L10n.of(context).nearestStation,
+    };
   }
 
   Widget _topBar(GlassTheme g) {
     return Row(
       children: [
         GlassSurface(
-          radius: 15,
+          radius: 14,
           blur: 18,
           compact: true,
-          padding: const EdgeInsets.all(9),
-          child: ShaderMask(
-            shaderCallback: (r) => const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [GlassTheme.accentViolet, GlassTheme.accentBlue],
-            ).createShader(r),
-            child: const Icon(Icons.train_rounded, size: 26, color: Colors.white),
+          padding: const EdgeInsets.all(4),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: kIsWeb
+                ? Image.network(
+                    'icons/Icon-192.png',
+                    width: 34,
+                    height: 34,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        _fallbackIcon(),
+                  )
+                : Image.asset(
+                    'assets/branding/Icon-192.png',
+                    width: 34,
+                    height: 34,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        _fallbackIcon(),
+                  ),
           ),
         ),
         const SizedBox(width: 12),
@@ -691,65 +958,72 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         const Spacer(),
         // Constrained so a long station name can't shove the title off-screen.
         Flexible(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _findNearestStation,
-            child: GlassSurface(
-              radius: 999,
-              blur: 18,
-              pill: true,
-              compact: true,
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_locatingNearest)
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation(GlassTheme.accentViolet),
-                      ),
-                    )
-                  else
-                    const Icon(Icons.location_on_rounded,
-                        size: 15, color: GlassTheme.accentViolet),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      _locatingNearest
-                          ? 'Locating…'
-                          // Once resolved, the pill becomes the answer.
-                          : (_nearestStation?.name ??
-                              L10n.of(context).nearestStation),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: g.textPrimary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
+          child: Semantics(
+            button: true,
+            label: 'Nearest station. Tap to locate, hold to list nearby '
+                'stations.',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              // Tap is delivered on release via [_onPillPressUp] rather than
+              // through onTap, so the hold timer can veto it.
+              onTapDown: (_) => _onPillPressDown(),
+              onTapUp: (_) => _onPillPressUp(),
+              onTapCancel: _onPillPressCancel,
+              child: GlassSurface(
+                radius: 999,
+                blur: 18,
+                pill: true,
+                compact: true,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _pillLeading(),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        _pillLabel(context),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: g.textPrimary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                  if (!_locatingNearest && _nearestDistance != null) ...[
-                    const SizedBox(width: 5),
-                    Text(
-                      _nearestDistance!,
-                      style: TextStyle(
-                        color: g.textMuted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
+                    if (!_locatingNearest &&
+                        !_holding &&
+                        _nearestDistance != null) ...[
+                      const SizedBox(width: 5),
+                      Text(
+                        '· $_nearestDistance',
+                        style: TextStyle(
+                          color: g.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _fallbackIcon() {
+    return ShaderMask(
+      shaderCallback: (r) => const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [GlassTheme.accentViolet, GlassTheme.accentBlue],
+      ).createShader(r),
+      child: const Icon(Icons.train_rounded, size: 26, color: Colors.white),
     );
   }
 
@@ -808,6 +1082,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     icon: Icons.train_rounded,
                     hint: L10n.of(context).hintTrainNumber,
                     keyboardType: TextInputType.number,
+                    onSubmitted: _submitNumber,
                   ),
           ),
         ),
@@ -914,33 +1189,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   /// and a glow radiating from the tap point — plus the [GlassQuality] fallback
   /// that drops blur automatically on devices that can't keep up.
   Widget _searchTrainsButton(GlassTheme g) {
-    return LiquidGlassButton(
-      onPressed: _runRouteSearch,
-      expand: true,
-      // Pill, matching the shape it replaces. The squircle is applied inside.
-      cornerRadius: 999,
-      tint: AppColors.accent,
-      // Indigo, matching the glow the old flat pill cast — AppColors.accent and
-      // accentViolet are the same 0xFF8B5CF6, so tinting the glow with either
-      // would be invisible against the fill.
-      glowColor: GlassTheme.accentIndigo,
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      semanticLabel: L10n.of(context).searchTrains,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.search_rounded, size: 19, color: Colors.white),
-          const SizedBox(width: 9),
-          Text(
-            L10n.of(context).searchTrains,
-            style: const TextStyle(
+    return GlassSurface(
+      radius: 999,
+      blur: 16,
+      padding: const EdgeInsets.all(3.5),
+      child: LiquidGlassButton(
+        onPressed: _runRouteSearch,
+        expand: true,
+        cornerRadius: 999,
+        gradient: const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Color(0xFF8B5CF6), // Vibrant Violet
+            Color(0xFF6366F1), // Electric Indigo
+          ],
+        ),
+        glowColor: const Color(0xFF8B5CF6),
+        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 16),
+        semanticLabel: L10n.of(context).searchTrains,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.search_rounded,
+              size: 19,
               color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Text(
+              L10n.of(context).searchTrains,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1000,6 +1288,129 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         const Spacer(),
         Icon(Icons.tune_rounded, size: 18, color: g.textMuted),
       ],
+    );
+  }
+
+  // -------- Remote train-number lookup --------
+
+  /// The result of looking up a submitted train number that the catalog doesn't
+  /// know.
+  ///
+  /// Three outcomes, kept distinct on purpose. "Not found" and "couldn't check"
+  /// have different causes and call for different actions from the user, and
+  /// collapsing them into one message is what made the original bug invisible.
+  Widget _lookupPanel(GlassTheme g) {
+    final t = L10n.of(context);
+    final number = _submittedNumber;
+    final async = ref.watch(trainNumberLookupProvider(number));
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: async.when(
+        loading: () => _lookupBusy(g, t.searchingTrain(number)),
+        // A failure to ASK is never reported as an answer about the train.
+        error: (_, _) => _lookupMessage(
+          g,
+          icon: Icons.cloud_off_rounded,
+          title: t.trainLookupFailed,
+          body: t.trainLookupFailedHint,
+          onRetry: () => ref.invalidate(trainNumberLookupProvider(number)),
+        ),
+        data: (train) => train == null
+            ? _lookupMessage(
+                g,
+                icon: Icons.search_off_rounded,
+                title: t.trainNotFound(number),
+                body: t.trainNotFoundHint,
+              )
+            // Found remotely: shown without chip filtering, per _applyChips.
+            : _results(g, [train]),
+      ),
+    );
+  }
+
+  Widget _lookupBusy(GlassTheme g, String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 34),
+      child: Column(
+        children: [
+          SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: GlassTheme.accentViolet,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: g.textSecondary, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lookupMessage(
+    GlassTheme g, {
+    required IconData icon,
+    required String title,
+    required String body,
+    VoidCallback? onRetry,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 30),
+      child: Column(
+        children: [
+          Icon(icon, size: 40, color: g.textMuted),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: g.textPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            body,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: g.textSecondary, fontSize: 13.5, height: 1.4),
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(height: 16),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                Haptics.tap();
+                onRetry();
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+                decoration: BoxDecoration(
+                  gradient: GlassTheme.accent,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  L10n.of(context).tryAgain,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -1214,11 +1625,16 @@ class _SearchBar extends StatefulWidget {
     this.icon = Icons.search_rounded,
     this.hint = '',
     this.keyboardType,
+    this.onSubmitted,
   });
   final TextEditingController controller;
   final IconData icon;
   final String hint;
   final TextInputType? keyboardType;
+
+  /// Fired by the keyboard's search/done action. The train-number field looks
+  /// up remotely only from here, never while typing.
+  final ValueChanged<String>? onSubmitted;
 
   @override
   State<_SearchBar> createState() => _SearchBarState();
@@ -1277,6 +1693,10 @@ class _SearchBarState extends State<_SearchBar> {
                   controller: widget.controller,
                   focusNode: _focus,
                   keyboardType: widget.keyboardType,
+                  textInputAction: widget.onSubmitted == null
+                      ? TextInputAction.done
+                      : TextInputAction.search,
+                  onSubmitted: widget.onSubmitted,
                   cursorColor: GlassTheme.accentViolet,
                   style: TextStyle(
                     color: g.textPrimary,
@@ -1711,7 +2131,11 @@ class _RouteBannerState extends State<_RouteBanner>
     final g = context.glass;
     final t = L10n.of(context);
     final statusColor = AppColors.onTime;
-    final statusText = t.scheduledDays(widget.train.daysLabel);
+    // Null when the source never stated a running pattern. The pill is hidden
+    // entirely in that case — there is no l10n string for "unknown schedule", and
+    // borrowing an unrelated one would be worse than saying nothing.
+    final days = widget.train.daysLabel;
+    final String? statusText = days == null ? null : t.scheduledDays(days);
     final platformText = t.platformTba;
 
     return ClipRRect(
@@ -1818,21 +2242,23 @@ class _RouteBannerState extends State<_RouteBanner>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                          color: statusColor, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      statusText,
-                      style: const TextStyle(
-                        color: GlassTheme.onBanner,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
+                    if (statusText != null) ...[
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                            color: statusColor, shape: BoxShape.circle),
                       ),
-                    ),
+                      const SizedBox(width: 6),
+                      Text(
+                        statusText,
+                        style: const TextStyle(
+                          color: GlassTheme.onBanner,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

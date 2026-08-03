@@ -35,14 +35,27 @@ Deno.serve(async (req) => {
     }
 
     // IMPORTANT: `date` is accepted but deliberately NOT forwarded to RailKit.
-    // Passing the optional 3rd argument makes the API reject the request with
-    // HTTP 502 "SDK signature mismatch" (verified: 2 args -> 200, 3 args -> 502
-    // for the same route). The 2-arg response is a full timetable that already
-    // includes `running_days` per train, so the client can tell which services
-    // run on the chosen date without a date-specific query.
     //
-    // Dropping the date from the cache key too means one cache entry per route
-    // pair instead of one per pair+date — far more cache hits on a 50/month tier.
+    // The ORIGINAL reason no longer applies. Under the npm SDK, passing the
+    // optional 3rd argument made the API reject the request with HTTP 502 "SDK
+    // signature mismatch" (verified: 2 args -> 200, 3 args -> 502 for the same
+    // route). Since `_shared/railkit.ts` moved to the REST endpoints, `date` is a
+    // plain query parameter (`?date=DD-MM-YYYY`) and that failure cannot occur —
+    // `rk.search` now accepts and forwards it correctly.
+    //
+    // The REMAINING reason still holds, and it is a quota decision. The undated
+    // response is a full timetable that already carries `running_days` per train,
+    // so the client can tell which services run on a chosen date without asking
+    // the API. Keeping the date out of the request AND out of the cache key means
+    // one cache entry per route pair instead of one per pair+date — which on a
+    // 50-requests-per-MONTH tier is the difference between a warm cache and
+    // burning the budget on the same route across five dates.
+    //
+    // To make it date-specific, both lines below have to change together:
+    // `cacheKey: \`search:${from}:${to}:${date ?? "any"}\`` and
+    // `run: () => rk.search(from, to, date ? toRailkitDate(date) : undefined)`.
+    // Forwarding the date without keying on it would serve one date's results
+    // for another.
     const res = await cachedCall({
       db: admin(),
       method: "search",

@@ -5,6 +5,27 @@ import 'station.dart';
 /// Per-station rendering state, derived from the live position.
 enum StationProgress { passed, current, upcoming }
 
+/// Where the displayed position actually came from.
+///
+/// Exists so the UI can be honest about provenance. The three cases look
+/// identical on screen without it, and they are not equivalent: an API fix is
+/// authoritative, a GPS-derived one is the device's own estimate against a cached
+/// route, and a schedule-only one is not an observation at all.
+enum PositionSource {
+  /// No position has been established — only the route is known.
+  none,
+
+  /// A real live running-status fix from the network.
+  liveApi,
+
+  /// Derived on-device: a GPS fix map-matched onto the route cached while the
+  /// app was last online. Works with the radio off.
+  offlineGps,
+
+  /// The published timetable only. Never presented as a live position.
+  scheduleOnly,
+}
+
 /// The full state of the tracking screen.
 ///
 /// A sealed hierarchy so the UI can exhaustively switch over the three
@@ -50,14 +71,42 @@ class TrackingReady extends TrackingState {
   /// real route, and the badge reads OFFLINE rather than pretending to be live.
   final bool live;
 
+  /// Where [position] came from. Drives the provenance pill and the offline
+  /// indicator.
+  final PositionSource source;
+
+  /// When the app last received real data from the network, regardless of what
+  /// is being displayed now. This is what "last synced Xm ago" reports, and it
+  /// is the only honest measure of how stale an offline picture is.
+  final DateTime? lastSyncedAt;
+
+  /// Ground speed measured on-device, when available. Null falls back to
+  /// [avgSpeedKmh] for ETA purposes.
+  final double? measuredSpeedKmh;
+
+  /// ETA to the next station in minutes, when something better than
+  /// distance-over-assumed-speed is known.
+  final int? etaOverrideMinutes;
+
   const TrackingReady({
     required this.journey,
     required this.position,
     this.live = false,
+    this.source = PositionSource.none,
+    this.lastSyncedAt,
+    this.measuredSpeedKmh,
+    this.etaOverrideMinutes,
   });
 
   /// Assumed cruising speed, used to turn remaining distance into an ETA.
   static const double avgSpeedKmh = 78;
+
+  /// True when the position on screen was worked out on the device rather than
+  /// received from the network.
+  bool get isOfflinePosition => source == PositionSource.offlineGps;
+
+  /// Speed used for estimates: measured when the device knows it, else nominal.
+  double get effectiveSpeedKmh => measuredSpeedKmh ?? avgSpeedKmh;
 
   List<Station> get stations => journey.stations;
 
@@ -96,7 +145,13 @@ class TrackingReady extends TrackingState {
       ? 0
       : (distanceCoveredKm / totalDistanceKm).clamp(0.0, 1.0);
 
+  /// Minutes to the next station.
+  ///
+  /// Prefers [etaOverrideMinutes] — offline tracking supplies one derived from
+  /// the train's actual measured speed, or from the timetable, which beats
+  /// dividing by a fixed nominal speed.
   int get etaNextMinutes =>
+      etaOverrideMinutes ??
       (distanceToNextKm / avgSpeedKmh * 60).ceil();
 
   DateTime get etaNextClock =>

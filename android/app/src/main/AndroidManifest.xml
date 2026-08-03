@@ -1,10 +1,34 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Location is requested at runtime, only when the user opts into
-         "Inside this train?" — never on launch. COARSE covers cell-tower mode;
-         FINE is requested only for the opt-in GPS mode. -->
+         "Inside this train?" or offline tracking — never on launch. COARSE
+         covers cell-tower mode; FINE is requested only for the opt-in GPS mode. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- OFFLINE TRACKING: continuing to follow the train while the screen is off
+         or the app is backgrounded.
+
+         Android 10 (API 29) onwards, location updates outside the foreground
+         require BOTH a background-location grant AND a foreground service, and
+         from Android 14 (API 34) that service must declare a type. geolocator's
+         own manifest contributes the <service> element with
+         foregroundServiceType="location"; the permissions belong to the app, so
+         they are declared here.
+
+         WAKE_LOCK backs `ForegroundNotificationConfig.enableWakeLock`, without
+         which the OS suspends the sampling loop between screen-on periods and
+         the position silently stops advancing.
+
+         PLAY STORE NOTE: ACCESS_BACKGROUND_LOCATION requires a prominent-
+         disclosure declaration and review before release. The app degrades
+         gracefully without it — tracking simply pauses when backgrounded (the
+         same behaviour as iOS "While Using the App"), so it is not load-bearing
+         for the foreground experience. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <application
         android:label="My Train"

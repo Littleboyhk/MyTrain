@@ -132,7 +132,85 @@ class L10nTa extends L10n {
   }
 
   @override
+  String get sectionPersonal => 'PERSONAL';
+
+  @override
+  String get sectionSpot => 'SPOT SETTINGS';
+
+  @override
+  String get sectionSpeedometer => 'SPEEDOMETER SETTINGS';
+
+  @override
+  String get sectionAlarm => 'ALARM SETTINGS';
+
+  @override
+  String get timeSettings => 'Time settings';
+
+  @override
+  String get timeSettingsHint => 'Show times as AM/PM instead of 24-hour';
+
+  @override
+  String get insideTrainSetting => 'Are you inside train option';
+
+  @override
+  String get insideTrainSettingHint =>
+      'Suggest sharing your location when a journey opens';
+
+  @override
+  String get spotNotifications => 'Spot notifications';
+
+  @override
+  String get spotNotificationsHint =>
+      'Your location as a standing notification';
+
+  @override
+  String get spotNotificationsUnsupported =>
+      'Not available in this build — needs a notification plugin, and has no web equivalent';
+
+  @override
+  String get speedometerSetting => 'Speedometer (Beta)';
+
+  @override
+  String get speedometerSettingHint => 'Show live GPS speed while tracking';
+
+  @override
+  String get speedometerRequiresGps =>
+      'Appears on the tracking screen once you start sharing your location in GPS mode, which is where the speed reading comes from.';
+
+  @override
+  String get alarmTone => 'Alarm tone';
+
+  @override
+  String alarmToneChanged(String tone) {
+    return 'Alarm tone set to $tone';
+  }
+
+  @override
+  String get alarmTonePlaybackNote =>
+      'Select an alarm tone to preview and set your preferred sound.';
+
+  @override
   String get noTrainsMatch => 'உங்கள் வடிகட்டிகளுக்கு ரயில்கள் பொருந்தவில்லை';
+
+  @override
+  String trainNotFound(String number) {
+    return 'Train $number not found';
+  }
+
+  @override
+  String get trainNotFoundHint => 'Check the number and try again';
+
+  @override
+  String get trainLookupFailed => 'Couldn\'t check right now';
+
+  @override
+  String get trainLookupFailedHint =>
+      'Something went wrong reaching the railway data. Try again in a moment.';
+
+  @override
+  String searchingTrain(String number) {
+    return 'Looking up train $number…';
+  }
 
   @override
   String get statusOnTime => 'சரியான நேரத்தில்';

@@ -22,6 +22,7 @@ import '../widgets/journey_duration_bar.dart';
 import '../widgets/mesh_background.dart';
 import '../widgets/running_days_row.dart';
 import '../widgets/train_number_tag.dart';
+import '../widgets/report_missing_train_sheet.dart';
 import 'live_tracking_screen.dart';
 
 /// Search results for a chosen route (FROM → TO).
@@ -129,7 +130,11 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
     return out;
   }
 
-  static int? _minutes(String hhmm) {
+  /// Null for an unknown or unparseable time. The sort already treats null as
+  /// "leave the order alone", so a train with no schedule does not jump to the
+  /// top.
+  static int? _minutes(String? hhmm) {
+    if (hhmm == null) return null;
     final m = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(hhmm.trim());
     if (m == null) return null;
     return int.parse(m.group(1)!) * 60 + int.parse(m.group(2)!);
@@ -323,9 +328,14 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
     );
   }
 
-  void _reportMissing() => _notAvailable(
-        'Reporting a missing train needs a backend that doesn\'t exist yet.',
-      );
+  void _reportMissing() {
+    Haptics.tap();
+    showReportMissingTrainSheet(
+      context,
+      from: widget.from,
+      to: widget.to,
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // 2) Filter row

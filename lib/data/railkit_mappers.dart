@@ -15,18 +15,26 @@
 //       distance, day, platform, coordinates } ] }
 //
 //   trackTrain -> data: { trainNo, trainName, date:"26-Jul-2026", statusNote,
-//       lastUpdate, totalStations, coachPosition[], currentStationCode,
+//       lastUpdate, totalStations, currentStationCode,
 //       timeline: [ { stationCode, stationName, platform, distanceKm,
-//       arrival:{scheduled,actual,delay}, departure:{...}, type, status } ] }
+//       arrival:{scheduled,actual,delay}, departure:{...}, type, status,
+//       coachPosition: [ {type,number,position} ] } ] }
 //       NOTE: `delay` is a STRING ("On Time"), endpoints use "SRC"/"DSTN",
 //       and actual times may carry a trailing "*".
+//       CORRECTED: `coachPosition[]` was listed at the `data:` level here.
+//       RailKit's published SDK reference places it INSIDE each `timeline[]`
+//       entry; only `getTrainHistory` returns it top-level. Code reading
+//       `data.coachPosition` finds nothing and reports the train as having no
+//       published composition. See [coachPositionFromRailkitTrack].
 import 'package:flutter/foundation.dart';
 
 import '../models/journey.dart';
 import '../models/pnr_status.dart';
 import '../models/rail_station.dart';
 import '../models/station.dart';
+import '../models/station_live_status.dart';
 import '../models/train_summary.dart';
+import '../utils/train_type_helper.dart';
 import 'train_repository.dart';
 
 // Small null-safe helper: first non-empty value among candidate keys.
@@ -103,17 +111,7 @@ String? _runningMask(String? raw) {
 }
 
 String _inferType(String name, [String? rawType]) {
-  final n = '$name ${rawType ?? ''}'.toLowerCase();
-  if (n.contains('rajdhani')) return 'Rajdhani';
-  if (n.contains('shatabdi')) return 'Shatabdi';
-  if (n.contains('vande bharat')) return 'Vande Bharat';
-  if (n.contains('duronto')) return 'Duronto';
-  if (n.contains('humsafar')) return 'Humsafar';
-  if (n.contains('intercity')) return 'Intercity';
-  if (n.contains('superfast')) return 'Superfast';
-  if (n.contains('mail')) return 'Mail';
-  if (n.contains('express') || n.contains('exp')) return 'Express';
-  return 'Express';
+  return TrainTypeHelper.inferType(name, rawType);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,20 +330,192 @@ String? validateRouteMatchesTrain(Journey journey, TrainSummary? train) {
 // ---------------------------------------------------------------------------
 
 /// Live status extracted from `trackTrain`. Route/timeline still comes from
-/// `getTrainInfo`; this only overlays "where is it now / how late".
+/// `getTrainInfo` or RailRadar; this overlays "where is it now, how late, and
+/// what actually happened at each stop".
 class RailkitLiveStatus {
   final String? currentStationCode;
   final String statusNote;
   final int delayMinutes;
   final bool started;
 
+  /// Per-station live timing, keyed by UPPERCASE station code.
+  ///
+  /// Only `type: "stoppage"` entries appear here. RailKit's `intermediate`
+  /// entries carry no times at all — the documented sample has only `type`,
+  /// `status`, `stationCode` and `stationName` — so there is nothing to record.
+  final Map<String, StationLiveStatus> stationStatus;
+
   const RailkitLiveStatus({
     required this.currentStationCode,
     required this.statusNote,
     required this.delayMinutes,
     required this.started,
+    this.stationStatus = const {},
   });
 }
+
+/// Sentinels RailKit uses where a time cannot exist: the origin has no arrival,
+/// the terminus no departure.
+const Set<String> _kEndpointSentinels = {'SRC', 'DSTN'};
+
+/// Pulls the coach order out of a `trackTrain` payload as the same
+/// hyphen-delimited string RailRadar returns, so [CoachPosition.parse] and the
+/// Coach Position screen need no second code path per provider.
+///
+/// COSTS NO QUOTA. `trackTrain` is already called for live status on every
+/// tracking session, so this reads a field out of a response the app has in hand
+/// and that the Edge Function has already cached. It never issues a request.
+///
+/// UNVERIFIED AGAINST A LIVE PAYLOAD — deliberately tolerant because of it. The
+/// shape comes from RailKit's published SDK reference, not from an observed
+/// response: no successful `trackTrain` body has been captured locally, the only
+/// local capture being a 132-byte
+/// `{"success":false,"error":"Train data not available for date: ..."}`. This
+/// file's own header comment had the nesting wrong, which is exactly the reason
+/// not to trust a single documented shape. So both documented nestings and both
+/// plausible element shapes are accepted, and anything unrecognised yields null
+/// rather than a partial or invented sequence.
+///
+/// Remove the tolerance once a real payload confirms which shape ships.
+String? coachPositionFromRailkitTrack(dynamic data) {
+  if (data is! Map) return null;
+
+  // 1) Top level. Where `getTrainHistory` documents it, and where this file's
+  //    header comment used to claim `trackTrain` returns it.
+  final top = _coachSequence(data['coachPosition']);
+  if (top != null) return top;
+
+  // 2) Inside a timeline entry, where the SDK reference actually documents it.
+  //    Entries are scanned in order and the first usable array wins; the rake is
+  //    a property of the train, so any stop that carries it carries the same one.
+  final timeline = data['timeline'];
+  if (timeline is List) {
+    for (final entry in timeline) {
+      if (entry is! Map) continue;
+      final seq = _coachSequence(entry['coachPosition']);
+      if (seq != null) return seq;
+    }
+  }
+  return null;
+}
+
+/// Normalises one `coachPosition` value into `ENG-B1-S1`, or null when there is
+/// nothing usable in it.
+String? _coachSequence(dynamic raw) {
+  if (raw == null) return null;
+
+  // Already the RailRadar-style string. Accepted so a provider switch to the
+  // simpler shape does not silently empty the screen.
+  if (raw is String) {
+    final v = raw.trim();
+    return v.isEmpty ? null : v;
+  }
+  if (raw is! List || raw.isEmpty) return null;
+
+  // (label, position) pairs. `position` is an ordinal in the rake, sent as a
+  // string in the reference sample.
+  final entries = <({String label, int? at})>[];
+  for (final e in raw) {
+    if (e is String) {
+      final v = e.trim();
+      if (v.isNotEmpty) entries.add((label: v, at: null));
+      continue;
+    }
+    if (e is! Map) continue;
+    // `number` is the coach label a passenger reads off the side (B1, S4, ENG);
+    // `type` is the class (3A). Prefer the label, fall back to the class so a
+    // payload carrying only `type` still renders something true.
+    final label = (e['number'] ?? e['type'])?.toString().trim() ?? '';
+    if (label.isEmpty) continue;
+    entries.add((
+      label: label,
+      at: int.tryParse((e['position'] ?? '').toString().trim()),
+    ));
+  }
+  if (entries.isEmpty) return null;
+
+  // Order by `position` only when every entry has one. A partial ordering would
+  // rearrange some coaches and leave others where they fell, which is worse than
+  // trusting the array order the provider sent.
+  if (entries.every((e) => e.at != null)) {
+    entries.sort((a, b) => a.at!.compareTo(b.at!));
+  }
+  return entries.map((e) => e.label).join('-');
+}
+
+/// `"17:05"` (or `"17:05*"`) anchored onto [anchor] plus [dayOffset] days.
+///
+/// The trailing `*` is stripped: this file's header records that RailKit marks
+/// some actual times that way. I have not observed one in a live payload —
+/// RailKit's published sample shows none — so this is defensive, not confirmed.
+/// Anything that is not a clock time (`SRC`, `DSTN`, `--`, `""`) yields null
+/// rather than a guessed value.
+DateTime? _clockOnto(String raw, DateTime anchor, int dayOffset) {
+  final v = raw.trim().replaceAll('*', '').trim();
+  final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(v);
+  if (m == null) return null;
+  final h = int.tryParse(m.group(1)!) ?? 0;
+  final min = int.tryParse(m.group(2)!) ?? 0;
+  if (h > 23 || min > 59) return null;
+  final base = DateTime(anchor.year, anchor.month, anchor.day);
+  return base.add(Duration(days: dayOffset, hours: h, minutes: min));
+}
+
+/// Minutes since midnight for a bare `HH:MM`, or null when it is not a time.
+int? _minuteOfDay(String raw) {
+  final v = raw.trim().replaceAll('*', '').trim();
+  final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(v);
+  if (m == null) return null;
+  final h = int.tryParse(m.group(1)!) ?? 0;
+  final min = int.tryParse(m.group(2)!) ?? 0;
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/// RailKit's `"31-Mar-2026"` journey date. Null when absent or unparseable, so
+/// the caller can fall back rather than inventing a date.
+DateTime? _railkitDate(String raw) {
+  final m = RegExp(r'^(\d{1,2})-([A-Za-z]{3})-(\d{4})$').firstMatch(raw.trim());
+  if (m == null) return null;
+  const months = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+    'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+  };
+  final month = months[m.group(2)!.toLowerCase()];
+  if (month == null) return null;
+  final day = int.tryParse(m.group(1)!);
+  final year = int.tryParse(m.group(3)!);
+  if (day == null || year == null) return null;
+  return DateTime(year, month, day);
+}
+
+/// Parses one `{scheduled, actual, delay}` leg.
+StationLegStatus _legFromRailkit(dynamic raw, DateTime anchor, int dayOffset) {
+  if (raw is! Map) return const StationLegStatus();
+  final m = raw.cast<String, dynamic>();
+
+  final schedRaw = _s(m['scheduled']);
+  final actualRaw = _s(m['actual']);
+
+  final sentinel = _kEndpointSentinels.contains(schedRaw.toUpperCase()) ||
+      _kEndpointSentinels.contains(actualRaw.toUpperCase());
+
+  return StationLegStatus(
+    scheduled: _clockOnto(schedRaw, anchor, dayOffset),
+    actual: _clockOnto(actualRaw, anchor, dayOffset),
+    rawDelay: _s(m['delay']),
+    isTerminusSentinel: sentinel,
+  );
+}
+
+StationLiveStage _stageFromRailkit(String raw) => switch (raw.toLowerCase()) {
+      'passed' => StationLiveStage.passed,
+      'current' => StationLiveStage.current,
+      'upcoming' => StationLiveStage.upcoming,
+      // An unrecognised status is treated as upcoming, the cautious end: it
+      // withholds the actual row rather than presenting it as observed.
+      _ => StationLiveStage.upcoming,
+    };
 
 RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
   try {
@@ -358,21 +528,71 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
     final note = _s(m['statusNote']);
     final current = _s(m['currentStationCode']);
 
+    // Clock times in the timeline are bare `HH:MM`, so they need a date to hang
+    // off. `date` looks like "31-Mar-2026"; if it will not parse we fall back to
+    // today, which is what the route mappers already anchor to.
+    final anchor = _railkitDate(_s(m['date'])) ?? DateTime.now();
+
     // Delay arrives as a label ("On Time", "15 Min Late") on each stop; take
-    // the latest non-empty one at/behind the current position.
+    // the latest non-empty one at/behind the current position. Kept for the
+    // train-level figure the hero card and the projected-time caption still use.
     int delay = 0;
+    final perStation = <String, StationLiveStatus>{};
+
+    // Day counter: the timeline is in route order with bare clock times, so a
+    // time going backwards means the run has crossed midnight.
+    var dayOffset = 0;
+    int? previousMinuteOfDay;
+
     for (final raw in (m['timeline'] as List)) {
       if (raw is! Map) continue;
       final s = raw.cast<String, dynamic>();
-      if (_s(s['status']).toLowerCase() == 'upcoming') continue;
-      for (final key in ['departure', 'arrival']) {
-        final leg = s[key];
-        if (leg is Map) {
-          final d = _s(leg['delay']);
-          final mins = RegExp(r'(\d+)').firstMatch(d)?.group(1);
-          if (mins != null) delay = int.tryParse(mins) ?? delay;
+
+      final stage = _stageFromRailkit(_s(s['status']));
+
+      if (stage != StationLiveStage.upcoming) {
+        for (final key in ['departure', 'arrival']) {
+          final leg = s[key];
+          if (leg is Map) {
+            final d = _s(leg['delay']);
+            final mins = RegExp(r'(\d+)').firstMatch(d)?.group(1);
+            if (mins != null) delay = int.tryParse(mins) ?? delay;
+          }
         }
       }
+
+      // `intermediate` points carry no times, platform or distance — only an
+      // identity and a status — so they contribute nothing here.
+      if (_s(s['type']).toLowerCase() != 'stoppage') continue;
+
+      final code = _s(s['stationCode']).toUpperCase();
+      if (code.isEmpty) continue;
+
+      // Advance the day counter when this stop's scheduled time runs backwards
+      // against the previous stop's — the route is in order, so that only
+      // happens at midnight. Compared as minute-of-day to keep it independent
+      // of the anchor date.
+      final minuteOfDay = _minuteOfDay(
+            _s((s['arrival'] is Map) ? s['arrival']['scheduled'] : null),
+          ) ??
+          _minuteOfDay(
+            _s((s['departure'] is Map) ? s['departure']['scheduled'] : null),
+          );
+      if (minuteOfDay != null) {
+        if (previousMinuteOfDay != null && minuteOfDay < previousMinuteOfDay) {
+          dayOffset++;
+        }
+        previousMinuteOfDay = minuteOfDay;
+      }
+
+      final platform = _s(s['platform']);
+      perStation[code] = StationLiveStatus(
+        stationCode: code,
+        stage: stage,
+        arrival: _legFromRailkit(s['arrival'], anchor, dayOffset),
+        departure: _legFromRailkit(s['departure'], anchor, dayOffset),
+        platform: platform.isEmpty ? null : platform,
+      );
     }
 
     return RailkitLiveStatus(
@@ -381,6 +601,7 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
       delayMinutes: delay,
       started: current.isNotEmpty ||
           !note.toLowerCase().contains('yet to start'),
+      stationStatus: perStation,
     );
   } catch (e) {
     debugPrint('[RailKit] track mapping failed: $e');
@@ -391,6 +612,164 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
 // ---------------------------------------------------------------------------
 // checkPNRStatus
 // ---------------------------------------------------------------------------
+/// First non-empty value for [keys] across [maps], in order.
+///
+/// RailKit's PNR payload is NESTED, so identity fields have to be looked for in
+/// the sub-object that owns them AND at the top level, where a flat variant would
+/// put them. Checking both is what keeps this working if either shape ships.
+dynamic _firstIn(List<Map<String, dynamic>> maps, List<String> keys) {
+  for (final m in maps) {
+    final v = _first(m, keys);
+    if (v != null) return v;
+  }
+  return null;
+}
+
+/// A nested sub-object, or an empty map when absent.
+Map<String, dynamic> _obj(dynamic v) =>
+    v is Map ? v.cast<String, dynamic>() : const <String, dynamic>{};
+
+/// A station reference that may be a bare code or a `{code, name}` object.
+///
+/// Returns [fallback] when nothing usable is present, so the em-dash convention
+/// the PNR screen relies on for "not stated" is preserved — resolving a nested
+/// object must not quietly change absence from `—` to an empty string.
+String _stationRef(dynamic v, [String fallback = '—']) {
+  if (v is Map) {
+    final s = _s(_first(v.cast<String, dynamic>(), ['code', 'stnCode', 'name']));
+    return s.isEmpty ? fallback : s;
+  }
+  final s = _s(v);
+  return s.isEmpty ? fallback : s;
+}
+
+/// The human-readable station name from a `{code, name}` ref.
+///
+/// Falls back to [codeFallback] so the UI still has something true to print — the
+/// code repeated is honest, if redundant. Never invents a name.
+String _stationName(dynamic v, String codeFallback) {
+  if (v is Map) {
+    final n = _s(_first(v.cast<String, dynamic>(), ['name', 'stnName']));
+    if (n.isNotEmpty) return n;
+  }
+  return codeFallback;
+}
+
+/// `HH:MM` out of a RailKit PNR datetime such as `Aug 23, 2026 8:45:00 PM`.
+///
+/// THESE ARE REAL SCHEDULED TIMES, not booking timestamps. Checked against train
+/// 12257: `dateOfJourney` 20:45 from YPR, `arrivalDate` 10:48 next day at KYJ,
+/// 708 km apart — about fourteen hours, which is exactly the run. An earlier round
+/// of this file assumed a PNR carried no timetable and dashed both fields out;
+/// that was wrong, and the values were sitting in the payload the whole time.
+///
+/// Returns null rather than guessing when there is no clock in the string, since
+/// some responses carry a bare date.
+String? _clockFrom(dynamic raw) {
+  final s = _s(raw);
+  if (s.isEmpty) return null;
+  final m = RegExp(r'(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?').firstMatch(s);
+  if (m == null) return null;
+  var h = int.tryParse(m.group(1)!);
+  final min = int.tryParse(m.group(2)!);
+  if (h == null || min == null || min > 59) return null;
+  final suffix = m.group(3)?.toLowerCase();
+  if (suffix == 'pm' && h < 12) h += 12;
+  if (suffix == 'am' && h == 12) h = 0;
+  if (h > 23) return null;
+  return '${h.toString().padLeft(2, '0')}:${min.toString().padLeft(2, '0')}';
+}
+
+/// Whole days between two PNR datetimes, or 0 when either is unusable.
+///
+/// Drives the `+1 day` marker on the arrival, so an overnight run does not read
+/// as arriving before it left.
+int _dayOffsetBetween(dynamic from, dynamic to) {
+  final a = _parseDateOrNull(from);
+  final b = _parseDateOrNull(to);
+  if (a == null || b == null) return 0;
+  final days = DateTime(b.year, b.month, b.day)
+      .difference(DateTime(a.year, a.month, a.day))
+      .inDays;
+  return days < 0 ? 0 : days;
+}
+
+/// Date AND clock combined, for arithmetic across midnight.
+DateTime? _dateTimeFrom(dynamic raw) {
+  final d = _parseDateOrNull(raw);
+  if (d == null) return null;
+  final clock = _clockFrom(raw);
+  if (clock == null) return d;
+  final parts = clock.split(':');
+  return DateTime(d.year, d.month, d.day,
+      int.parse(parts[0]), int.parse(parts[1]));
+}
+
+/// Journey length as `14h 03m`, matching the format the rest of the app uses.
+///
+/// Computed from the two full datetimes rather than the clocks alone, so an
+/// overnight run does not come out negative — 20:45 to 10:48 is 14h 03m, not
+/// minus ten hours.
+///
+/// Null when either end is missing or the arithmetic is not positive. The centre
+/// of the hero card then keeps its dash instead of showing `0h 00m`, which would
+/// read as a fact.
+String? _durationBetween(dynamic from, dynamic to) {
+  final a = _dateTimeFrom(from);
+  final b = _dateTimeFrom(to);
+  if (a == null || b == null) return null;
+  final mins = b.difference(a).inMinutes;
+  if (mins <= 0) return null;
+  return '${mins ~/ 60}h ${(mins % 60).toString().padLeft(2, '0')}m';
+}
+
+/// One passenger's reservation as a status STRING the shared parser understands.
+///
+/// RailKit sends `booking` and `current` as OBJECTS —
+/// `{status, coach, berthNo, berthCode, details}` — not strings. The previous code
+/// stringified the whole Map and handed it to [SeatAllocation.fromStatusString],
+/// which then read `{status:` as a coach id. `details` is already the canonical
+/// form (`CNF/B5/22/LB`) so it is preferred; otherwise the parts are reassembled
+/// in that order. Anything absent stays absent — no placeholders.
+String? _pnrStatusString(dynamic slot) {
+  if (slot == null) return null;
+  if (slot is String) {
+    final v = slot.trim();
+    return v.isEmpty ? null : v;
+  }
+  if (slot is! Map) return null;
+  final m = slot.cast<String, dynamic>();
+
+  final details = _s(_first(m, ['details', 'detail']));
+  // The live payload's `current.details` reads `CNF , B5 - 22 [LB]`, whose
+  // separators the parser does not cover. Normalising the punctuation to the
+  // slash-delimited form it already handles is cheaper and safer than teaching
+  // that parser a second syntax — it is shared with the RapidAPI path.
+  if (details.isNotEmpty) {
+    final normalised = details
+        .replaceAll(RegExp(r'[\[\]]'), ' ')
+        .replaceAll(RegExp(r'\s*[,\-]\s*'), '/')
+        .replaceAll(RegExp(r'\s+'), '/')
+        .replaceAll(RegExp(r'/{2,}'), '/')
+        .replaceAll(RegExp(r'^/|/$'), '')
+        .trim();
+    if (normalised.isNotEmpty) return normalised;
+  }
+
+  final parts = <String>[
+    ?_part(m, const ['status']),
+    ?_part(m, const ['coach', 'coachId']),
+    ?_part(m, const ['berthNo', 'berth', 'berth_no']),
+    ?_part(m, const ['berthCode', 'berth_code', 'berthType']),
+  ];
+  return parts.isEmpty ? null : parts.join('/');
+}
+
+String? _part(Map<String, dynamic> m, List<String> keys) {
+  final v = _s(_first(m, keys));
+  return v.isEmpty ? null : v;
+}
+
 PnrResult? pnrFromRailkit(dynamic data, String pnr) {
   try {
     dynamic node = data;
@@ -398,42 +777,72 @@ PnrResult? pnrFromRailkit(dynamic data, String pnr) {
     if (node is! Map) return null;
     final m = node.cast<String, dynamic>();
 
-    final rawNumber =
-        _s(_first(m, ['train_no', 'train_number', 'trainNumber', 'trainNo']));
+    // RailKit's PNR payload is NESTED. Verified against a live response:
+    //   { pnr, train:{name,number}, chart:{status},
+    //     booking:{fare,ticketFare,bookingDate},
+    //     journey:{class,quota,source,destination,boardingPoint,dateOfJourney,
+    //              arrivalDate,distance},
+    //     passengers:[{serialNumber,coachPosition,booking:{...},current:{...}}] }
+    //
+    // Every read below used to look only at the TOP level, so `rawNumber` came
+    // back empty and this returned null for EVERY real PNR — the lookup could
+    // only ever succeed for the three canned demo numbers. Both shapes are
+    // accepted now: the owning sub-object first, then the top level.
+    final train = _obj(m['train']);
+    final journey = _obj(m['journey']);
+    final chartObj = _obj(m['chart']);
+
+    final rawNumber = _s(_firstIn([train, m],
+        ['number', 'train_no', 'train_number', 'trainNumber', 'trainNo']));
     if (rawNumber.isEmpty) return null;
 
-    final name = _s(_first(m, ['train_name', 'trainName']), 'Train $rawNumber');
-    final boarding = _s(
-            _first(m, [
-              'boarding_point',
-              'boarding_station_code',
-              'from_stn_code',
-              'from',
-              'source',
-            ]),
-            '—')
-        .toUpperCase();
-    final dest = _s(
-            _first(m, [
-              'reservation_upto',
-              'destination_station_code',
-              'to_stn_code',
-              'to',
-              'destination',
-            ]),
-            '—')
-        .toUpperCase();
-    final travelClass =
-        _s(_first(m, ['class', 'journey_class', 'travel_class']), '—');
+    final name =
+        _s(_firstIn([train, m], ['name', 'train_name', 'trainName']),
+            'Train $rawNumber');
+    // Kept as refs, because each may be a bare code OR a `{code, name}` object —
+    // and when it is the object, the NAME was being thrown away and the code
+    // written into both fields, so the card read "YPR / YPR" instead of
+    // "YPR / Yesvantpur Jn".
+    final boardingRef = _firstIn([journey, m], [
+      'boardingPoint',
+      'boarding_point',
+      'boarding_station_code',
+      'from_stn_code',
+      'from',
+      'source',
+    ]);
+    final destRef = _firstIn([journey, m], [
+      'destination',
+      'reservation_upto',
+      'destination_station_code',
+      'to_stn_code',
+      'to',
+    ]);
+    final boarding = _stationRef(boardingRef).toUpperCase();
+    final dest = _stationRef(destRef).toUpperCase();
+    final boardingName = _stationName(boardingRef, boarding);
+    final destName = _stationName(destRef, dest);
 
-    final chartRaw =
-        _s(_first(m, ['chart_status', 'chartStatus', 'chart_prepared']))
-            .toLowerCase();
+    // Full datetimes. Nested on the real payload; the flat keys are kept for the
+    // other shape. Both the date and the clock are taken from these.
+    final departureRaw = _firstIn(
+        [journey, m], ['dateOfJourney', 'journey_date', 'doj', 'date']);
+    final arrivalRaw =
+        _firstIn([journey, m], ['arrivalDate', 'arrival_date', 'arrival']);
+    final travelClass = _s(
+        _firstIn([journey, m], ['class', 'journey_class', 'travel_class']), '—');
+
+    final chartRaw = _s(_firstIn(
+            [chartObj, m], ['status', 'chart_status', 'chartStatus', 'chart_prepared']))
+        .toLowerCase();
+    // Null when the field is absent or unrecognised. This previously fell through
+    // to notPrepared, which is the safer of the two guesses but still a claim the
+    // response never made.
     final chart = (chartRaw.contains('not') || chartRaw == 'false')
         ? ChartStatus.notPrepared
         : (chartRaw.contains('prepared') || chartRaw == 'true')
             ? ChartStatus.prepared
-            : ChartStatus.notPrepared;
+            : null;
 
     final passengersRaw =
         m['passengers'] ?? m['passenger_list'] ?? m['passengerList'];
@@ -443,10 +852,14 @@ PnrResult? pnrFromRailkit(dynamic data, String pnr) {
         final p = passengersRaw[i];
         if (p is! Map) continue;
         final pm = p.cast<String, dynamic>();
-        final booking =
-            _s(_first(pm, ['booking_status', 'bookingStatus', 'booking']), 'CNF');
-        final current = _s(
-            _first(pm, ['current_status', 'currentStatus', 'current']), booking);
+        // Objects, not strings — see [_pnrStatusString]. Falls back to the flat
+        // string keys so a flat variant still parses.
+        final booking = _pnrStatusString(
+                pm['booking'] ?? _first(pm, ['booking_status', 'bookingStatus'])) ??
+            'CNF';
+        final current = _pnrStatusString(
+                pm['current'] ?? _first(pm, ['current_status', 'currentStatus'])) ??
+            booking;
         passengers.add(PnrPassenger(
           index: i + 1,
           booking: _seatFromStatus(booking),
@@ -462,75 +875,97 @@ PnrResult? pnrFromRailkit(dynamic data, String pnr) {
         number: rawNumber,
         name: name,
         fromCode: boarding,
-        fromName: boarding,
+        fromName: boardingName,
         toCode: dest,
-        toName: dest,
-        departure: '--:--',
-        arrival: '--:--',
-        duration: '—',
-        daysLabel: 'Daily',
+        toName: destName,
+        // CORRECTED. This previously read "A PNR response has no timetable" and
+        // dashed both fields out. It does carry one: `journey.dateOfJourney` and
+        // `journey.arrivalDate` are full datetimes, and their clocks are the
+        // scheduled departure and arrival — verified on 12257 (20:45 YPR ->
+        // 10:48+1 KYJ, 708 km). Still null when a response omits the clock, so
+        // absence is represented rather than invented.
+        departure: _clockFrom(departureRaw),
+        arrival: _clockFrom(arrivalRaw),
+        arrivalDayOffset: _dayOffsetBetween(departureRaw, arrivalRaw),
+        // Derived from the two datetimes, not sent by the provider. Safe to
+        // derive because it is pure arithmetic on two values we were given —
+        // unlike a train name, which cannot be computed from anything.
+        duration: _durationBetween(departureRaw, arrivalRaw),
         type: _inferType(name),
       ),
-      journeyDate: _parseDate(_first(m, ['journey_date', 'doj', 'date'])),
-      travelClass: travelClass,
-      boardingCode: boarding,
+      journeyDate: _parseDateOrNull(departureRaw),
+      travelClass: travelClass.isEmpty || travelClass == '—' ? null : travelClass,
+
       chartStatus: chart,
       passengers: passengers,
     );
-  } catch (e, st) {
-    debugPrint('[RailKit] PNR mapping failed: $e\n$st');
+  } catch (e) {
+    if (kDebugMode) debugPrint('[RailKit] PNR mapping failed: ${e.runtimeType}');
     return null;
   }
 }
 
-DateTime _parseDate(dynamic raw) {
+/// Parses a provider date, returning null when it cannot.
+///
+/// Previously fell through to `DateTime.now()`, so an unparseable or missing
+/// journey date silently became today — a confident, wrong travel date on the
+/// PNR header.
+DateTime? _parseDateOrNull(dynamic raw) {
   final s = _s(raw);
   if (s.isNotEmpty) {
     final iso = DateTime.tryParse(s);
     if (iso != null) return iso;
+
+    const months = {
+      'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+      'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    };
+
+    // `Aug 23, 2026 8:45:00 PM` — the format RailKit's PNR journey date ACTUALLY
+    // uses, confirmed against a live response. Month first. The published SDK
+    // sample shows `22 Aug 2026, 04:35:00 pm` instead, so both orders are handled
+    // rather than trusting either document: whichever ships, the date resolves.
+    // Only the date part is taken; the trailing clock is the booking time, not
+    // something this field is asked for.
+    final monthFirst = RegExp(r'^([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})')
+        .firstMatch(s.trim());
+    if (monthFirst != null) {
+      final mo = months[monthFirst.group(1)!.toLowerCase().substring(0, 3)];
+      final d = int.tryParse(monthFirst.group(2)!);
+      final y = int.tryParse(monthFirst.group(3)!);
+      if (d != null && mo != null && y != null) return DateTime(y, mo, d);
+    }
+
+    // `22 Aug 2026, 04:35:00 pm` — day first.
+    final spaced =
+        RegExp(r'^(\d{1,2})\s+([A-Za-z]{3,})\.?,?\s+(\d{4})').firstMatch(s.trim());
+    if (spaced != null) {
+      final d = int.tryParse(spaced.group(1)!);
+      final mo = months[spaced.group(2)!.toLowerCase().substring(0, 3)];
+      final y = int.tryParse(spaced.group(3)!);
+      if (d != null && mo != null && y != null) return DateTime(y, mo, d);
+    }
+
     // DD-MM-YYYY or DD-Mon-YYYY
     final parts = s.split(RegExp(r'[-/]'));
     if (parts.length == 3) {
       final d = int.tryParse(parts[0]);
       final y = int.tryParse(parts[2]);
-      const months = {
-        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
-        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
-      };
       final mo = int.tryParse(parts[1]) ??
           months[parts[1].toLowerCase().substring(
               0, parts[1].length < 3 ? parts[1].length : 3)];
       if (d != null && mo != null && y != null) return DateTime(y, mo, d);
     }
   }
-  return DateTime.now();
+  return null;
 }
 
-SeatAllocation _seatFromStatus(String status) {
-  final s = status.toUpperCase().trim();
-  if (s.contains('CAN')) return const SeatAllocation.cancelled();
-  if (s.contains('RAC')) return SeatAllocation.rac(_digits(s) ?? 1);
-  if (s.contains('WL') || s.contains('WAIT')) {
-    return SeatAllocation.waitlist(_digits(s) ?? 1);
-  }
-  // e.g. "CNF/B2/34/LB" or "B2 34 LB"
-  final parts = s.split(RegExp(r'[\/ ]')).where((p) => p.isNotEmpty).toList();
-  String coach = '—', berth = '—';
-  String? berthType;
-  for (final p in parts) {
-    if (p == 'CNF' || p == 'CONF') continue;
-    if (RegExp(r'^\d+$').hasMatch(p)) {
-      berth = p;
-    } else if (['LB', 'MB', 'UB', 'SL', 'SU'].contains(p)) {
-      berthType = p;
-    } else if (coach == '—') {
-      coach = p;
-    }
-  }
-  return SeatAllocation.confirmed(coach, berth, berthType);
-}
-
-int? _digits(String s) {
-  final m = RegExp(r'(\d+)').firstMatch(s);
-  return m == null ? null : int.tryParse(m.group(1)!);
-}
+/// Delegates to [SeatAllocation.fromStatusString].
+///
+/// This used to be a second, subtly different parser: it substituted em dashes
+/// for a missing coach or berth, defaulted RAC and waitlist positions to 1, and
+/// recognised only five berth-type codes (dropping the real-world `SLB`, `SUB`
+/// and `SM`, and occasionally storing a dropped code as the coach). One parser
+/// now serves both providers and invents nothing.
+SeatAllocation _seatFromStatus(String status) =>
+    SeatAllocation.fromStatusString(status);

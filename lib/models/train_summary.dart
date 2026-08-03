@@ -8,15 +8,27 @@ class TrainSummary {
   final String toCode;
   final String toName;
 
-  /// Departure / arrival clock times, `HH:MM`.
-  final String departure;
-  final String arrival;
+  /// Departure / arrival clock times, `HH:MM`. Null when unknown.
+  ///
+  /// NULLABLE BECAUSE A PNR RESPONSE HAS NO TIMETABLE. These are real on the
+  /// search and catalog paths, but a PNR lookup returns booking data, not the
+  /// train's schedule. The RapidAPI PNR mapper used to fill in `17:00` and
+  /// `08:35` — a specific, plausible, wrong departure time for every train — and
+  /// the RailKit one used `--:--` sentinels. Absent is now absent, and callers
+  /// render a dash rather than a fiction.
+  final String? departure;
+  final String? arrival;
 
-  /// e.g. `15h 35m`.
-  final String duration;
+  /// e.g. `15h 35m`. Null when unknown — see [departure].
+  final String? duration;
 
-  /// e.g. `Daily` or `Mon, Wed, Fri`.
-  final String daysLabel;
+  /// e.g. `Daily` or `Mon, Wed, Fri`. Null when unknown.
+  ///
+  /// Both PNR mappers hardcoded `Daily`, which asserts a running pattern nothing
+  /// in the response states. [runningDaysMask] is the precise source and is
+  /// already documented as null-when-unknown; this is its human-readable
+  /// counterpart and gets the same treatment.
+  final String? daysLabel;
 
   /// e.g. `Rajdhani`, `Superfast`, `Express`.
   final String type;
@@ -43,10 +55,10 @@ class TrainSummary {
     required this.fromName,
     required this.toCode,
     required this.toName,
-    required this.departure,
-    required this.arrival,
-    required this.duration,
-    required this.daysLabel,
+    this.departure,
+    this.arrival,
+    this.duration,
+    this.daysLabel,
     required this.type,
     this.arrivalDayOffset = 0,
     this.runningDaysMask,

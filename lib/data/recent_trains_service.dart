@@ -125,10 +125,13 @@ class RecentTrainsNotifier extends Notifier<List<TrainSummary>> {
       fromName: s('fromName'),
       toCode: s('toCode'),
       toName: s('toName'),
-      departure: s('departure', '--:--'),
-      arrival: s('arrival', '--:--'),
-      duration: s('duration'),
-      daysLabel: s('daysLabel'),
+      // Round-trip null as null. These used to come back as '--:--' or '' even
+      // when the stored value was absent, which turned "unknown" into a value on
+      // every restore from cache.
+      departure: m['departure']?.toString(),
+      arrival: m['arrival']?.toString(),
+      duration: m['duration']?.toString(),
+      daysLabel: m['daysLabel']?.toString(),
       type: s('type', 'Express'),
       arrivalDayOffset: (m['arrivalDayOffset'] as num?)?.toInt() ?? 0,
       runningDaysMask: m['runningDaysMask']?.toString(),

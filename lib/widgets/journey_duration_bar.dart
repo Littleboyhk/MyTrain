@@ -13,15 +13,17 @@ import '../theme/glass_theme.dart';
 class JourneyDurationBar extends StatelessWidget {
   const JourneyDurationBar({
     super.key,
-    required this.departure,
-    required this.arrival,
-    required this.duration,
+    this.departure,
+    this.arrival,
+    this.duration,
     this.arrivalDayOffset = 0,
   });
 
-  final String departure;
-  final String arrival;
-  final String duration;
+  /// Nullable: a train reached via a PNR lookup has no timetable attached. Each
+  /// renders as an em dash rather than a plausible clock time.
+  final String? departure;
+  final String? arrival;
+  final String? duration;
 
   /// +1 when arrival is the next day, shown as a small "+1d".
   final int arrivalDayOffset;
@@ -33,7 +35,7 @@ class JourneyDurationBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text(
-          departure,
+          departure ?? '—',
           style: AppText.titleStrong.copyWith(
             color: g.textPrimary,
             fontSize: 16,
@@ -47,7 +49,7 @@ class JourneyDurationBar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              arrival,
+              arrival ?? '—',
               style: AppText.titleStrong.copyWith(
                 color: g.textPrimary,
                 fontSize: 16,
@@ -74,7 +76,7 @@ class JourneyDurationBar extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          duration,
+          duration ?? '—',
           style: AppText.label.copyWith(
             color: g.textSecondary,
             fontSize: 12,

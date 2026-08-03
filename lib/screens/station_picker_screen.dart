@@ -10,6 +10,7 @@ import '../utils/haptics.dart';
 import '../widgets/glass_container.dart';
 import '../widgets/icon_action_button.dart';
 import '../widgets/mesh_background.dart';
+import '../widgets/station_row_tile.dart';
 
 /// Full-screen searchable station picker over the ~9,000-station dataset.
 class StationPickerScreen extends ConsumerStatefulWidget {
@@ -191,7 +192,7 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       itemCount: results.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, i) => _StationRow(
+      itemBuilder: (context, i) => StationRowTile(
         station: results[i],
         query: trimmed,
         onTap: () => _select(results[i]),
@@ -214,14 +215,14 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
         if (recent.isNotEmpty) ...[
           _sectionHeader(L10n.of(context).sectionRecent),
           for (final s in recent) ...[
-            _StationRow(station: s, query: '', onTap: () => _select(s)),
+            StationRowTile(station: s, query: '', onTap: () => _select(s)),
             const SizedBox(height: 8),
           ],
           const SizedBox(height: 8),
         ],
         _sectionHeader(L10n.of(context).sectionPopular),
         for (final s in popular) ...[
-          _StationRow(station: s, query: '', onTap: () => _select(s)),
+          StationRowTile(station: s, query: '', onTap: () => _select(s)),
           const SizedBox(height: 8),
         ],
       ],
@@ -234,106 +235,6 @@ class _StationPickerScreenState extends ConsumerState<StationPickerScreen> {
       child: Text(
         text,
         style: AppText.overline.copyWith(color: context.glass.textMuted),
-      ),
-    );
-  }
-}
-
-class _StationRow extends StatelessWidget {
-  const _StationRow({
-    required this.station,
-    required this.query,
-    required this.onTap,
-  });
-
-  final RailStation station;
-  final String query;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final g = context.glass;
-    return GlassContainer(
-      radius: 20,
-      blurSigma: 15,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            children: [
-              // Glass Station Code Badge
-              GlassContainer(
-                radius: 12,
-                blurSigma: 0,
-                strong: true,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Text(
-                  station.code,
-                  style: const TextStyle(
-                    color: GlassTheme.accentViolet,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _highlightedName(context),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Station code · ${station.code}',
-                      style: AppText.label.copyWith(
-                        color: g.textMuted,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(Icons.north_east_rounded, size: 16, color: g.textMuted),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _highlightedName(BuildContext context) {
-    final g = context.glass;
-    final base = AppText.stationName.copyWith(color: g.textPrimary);
-    if (query.isEmpty) {
-      return Text(station.name,
-          maxLines: 1, overflow: TextOverflow.ellipsis, style: base);
-    }
-    final lower = station.name.toLowerCase();
-    final q = query.toLowerCase();
-    final idx = lower.indexOf(q);
-    if (idx < 0) {
-      return Text(station.name,
-          maxLines: 1, overflow: TextOverflow.ellipsis, style: base);
-    }
-    return RichText(
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      text: TextSpan(
-        style: base,
-        children: [
-          TextSpan(text: station.name.substring(0, idx)),
-          TextSpan(
-            text: station.name.substring(idx, idx + q.length),
-            style: base.copyWith(
-              color: GlassTheme.accentViolet,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          TextSpan(text: station.name.substring(idx + q.length)),
-        ],
       ),
     );
   }

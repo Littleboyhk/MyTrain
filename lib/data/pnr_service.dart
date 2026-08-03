@@ -88,7 +88,7 @@ class PnrService {
       train: _demoTrain('12951'),
       journeyDate: _daysFromNow(1),
       travelClass: '3A',
-      boardingCode: 'BCT',
+
       chartStatus: ChartStatus.prepared,
       passengers: const [
         PnrPassenger(
@@ -117,7 +117,7 @@ class PnrService {
       train: _demoTrain('12621'),
       journeyDate: _daysFromNow(6),
       travelClass: 'SL',
-      boardingCode: 'MAS',
+
       chartStatus: ChartStatus.notPrepared,
       passengers: const [
         PnrPassenger(
@@ -141,7 +141,7 @@ class PnrService {
       train: _demoTrain('12259'),
       journeyDate: _daysFromNow(2),
       travelClass: '2A',
-      boardingCode: 'SDAH',
+
       chartStatus: ChartStatus.prepared,
       passengers: const [
         PnrPassenger(

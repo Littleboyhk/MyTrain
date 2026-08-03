@@ -1,20 +1,32 @@
-// RailKit SDK wrapper for Supabase Edge Functions (Deno runtime).
+// RailKit client for Supabase Edge Functions (Deno runtime).
 //
-// RailKit ships as a Node.js npm package; Deno loads it via the `npm:` specifier
-// (native fetch + npm compat). If a first deploy reports an incompatibility with
-// the SDK on Deno, the fallback is a tiny Node serverless proxy that imports the
-// same package — but the cache/usage logic below stays identical.
+// TRANSPORT: direct REST over `fetch`, against the documented endpoints at
+// https://railkit-api.rajivdubey.dev with an `x-api-key` header.
+//
+// WHY NOT THE npm SDK. This file previously imported `npm:railkit@4.0.1`, which
+// Deno resolves through its Node compatibility layer. That worked but carried two
+// standing liabilities: the `npm:` specifier is a known source of Deno Deploy
+// resolution failures, and the SDK's own argument handling was already causing
+// trouble — a third argument to `searchTrainBetweenStations` returned HTTP 502
+// "SDK signature mismatch" (see the note in search-trains/index.ts). The REST
+// endpoints are plain HTTP GETs, which Deno does natively, so both problems
+// disappear along with the dependency.
+//
+// WHAT DID NOT CHANGE. Only the transport. The cache-first flow, the TTLs, the
+// monthly budget guard, `unwrap()` and the error taxonomy below are all exactly
+// as they were, because they operate on the response payload rather than on how
+// it was fetched.
 //
 // FREE TIER = 50 requests / MONTH. Every path here is cache-first; only a true
 // cache miss spends a request, and each real call is logged + counted.
-import {
-  configure,
-  searchTrainBetweenStations,
-  trackTrain,
-  checkPNRStatus,
-  getTrainInfo,
-} from "npm:railkit@4.0.1";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+/// Documented base URL. No trailing slash — every path below starts with one.
+const BASE_URL = "https://railkit-api.rajivdubey.dev";
+
+/// Upstream calls are bounded so a hung connection cannot hold an Edge Function
+/// open until the platform kills it. The SDK had no timeout of its own.
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export type RailKitCode =
   | "not_configured"
@@ -37,11 +49,15 @@ export class RailKitError extends Error {
   }
 }
 
-let _configured = false;
+let _apiKey: string | null = null;
 
-/// Configure the SDK exactly once per warm function instance (NOT per request).
+/// Resolve the API key once per warm function instance (NOT per request).
+///
+/// Kept as a named function with the same call sites as before: `cachedCall`
+/// invokes it ahead of spending a request so a missing secret fails before any
+/// cache or counter work happens.
 function ensureConfigured(): void {
-  if (_configured) return;
+  if (_apiKey) return;
   const key = Deno.env.get("RAILKIT_API_KEY");
   if (!key) {
     throw new RailKitError(
@@ -50,9 +66,106 @@ function ensureConfigured(): void {
       500,
     );
   }
-  configure(key);
-  _configured = true;
+  _apiKey = key;
 }
+
+/// Map an upstream HTTP status onto the existing error taxonomy.
+///
+/// Statuses are now explicit rather than sniffed out of an SDK exception's
+/// message, so this is strictly more reliable than the string matching in
+/// [normalizeError] — which stays for payload-level failures.
+///
+/// 404 deliberately becomes `upstream`/404: `track-train` treats exactly that
+/// combination as recoverable and falls back to the static schedule, which is how
+/// "no live data for this date" keeps showing the real route.
+function httpError(status: number, payload: unknown, raw: string): RailKitError {
+  // deno-lint-ignore no-explicit-any
+  const p = payload as any;
+  const message = String(
+    p?.error ?? p?.message ?? (raw || `RailKit returned HTTP ${status}`),
+  );
+
+  switch (status) {
+    case 400:
+      return new RailKitError("validation", message, 400);
+    case 401:
+      return new RailKitError("invalid_key", message, 401);
+    case 403:
+      return new RailKitError("inactive_key", message, 403);
+    case 404:
+      return new RailKitError("upstream", message, 404);
+    case 429:
+      return new RailKitError("quota_exceeded", message, 429);
+    default:
+      return new RailKitError("unknown", `HTTP ${status}: ${message}`, 502);
+  }
+}
+
+/// One authenticated GET against the RailKit REST API.
+///
+/// Returns the parsed JSON body. Throws a [RailKitError] for any transport,
+/// status or parse failure — never a bare fetch error, so callers keep seeing a
+/// single documented error type.
+async function request(path: string): Promise<unknown> {
+  ensureConfigured();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method: "GET",
+      headers: {
+        "x-api-key": _apiKey!,
+        "accept": "application/json",
+      },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // Timeout and DNS/socket failures both land here. Mapped to `unknown` rather
+    // than `upstream` on purpose: `upstream` would make track-train silently fall
+    // back to schedule data, hiding a real outage behind a plausible-looking
+    // screen. This preserves the behaviour the SDK path had.
+    const aborted = (err as Error)?.name === "AbortError";
+    throw new RailKitError(
+      "unknown",
+      aborted
+        ? `RailKit request timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : `RailKit request failed: ${String(err)}`,
+      502,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Read as text first: an error response is not guaranteed to be JSON, and
+  // `res.json()` would throw over the top of the real status.
+  const raw = await res.text();
+  let payload: unknown = null;
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!res.ok) throw httpError(res.status, payload, raw);
+
+  if (payload === null) {
+    throw new RailKitError(
+      "unknown",
+      "RailKit returned an empty or unparseable body",
+      502,
+    );
+  }
+  return payload;
+}
+
+/// Path segments come from user input (station codes, train numbers, PNRs), so
+/// they are escaped rather than interpolated raw.
+const seg = (v: string) => encodeURIComponent(v.trim());
 
 /// Map anything the SDK throws into a documented RailKitError.
 export function normalizeError(err: unknown): RailKitError {
@@ -87,17 +200,34 @@ export function normalizeError(err: unknown): RailKitError {
   return new RailKitError("unknown", msg || "Unknown RailKit error", 502);
 }
 
-/// Thin typed wrappers around the SDK methods actually used by the app.
-/// NOTE: RailKit dates are `DD-MM-YYYY` (per the docs example
-/// `trackTrain("12342","06-12-2025")`). Callers pass that format.
+/// Thin wrappers over the four documented endpoints the app uses.
+///
+/// NOTE: RailKit dates are `DD-MM-YYYY` (e.g. `/api/trackTrain/12345/28-03-2026`);
+/// `trackTrain` also accepts the literal `today`. Callers pass that format — see
+/// [toRailkitDate] for the conversion from the app's ISO dates.
+///
+/// The signatures are unchanged from the SDK-backed version, so every call site
+/// works untouched.
 export const rk = {
+  /// GET /api/searchTrainBetweenStations/:from/:to?date=DD-MM-YYYY
+  /// `date` is an optional query parameter here, not a positional argument —
+  /// which is what made the SDK reject it.
   search: (from: string, to: string, date?: string) =>
-    date
-      ? searchTrainBetweenStations(from, to, date)
-      : searchTrainBetweenStations(from, to),
-  track: (trainNumber: string, date: string) => trackTrain(trainNumber, date),
-  pnr: (pnr: string) => checkPNRStatus(pnr),
-  trainInfo: (trainNumber: string) => getTrainInfo(trainNumber),
+    request(
+      `/api/searchTrainBetweenStations/${seg(from)}/${seg(to)}` +
+        (date ? `?date=${encodeURIComponent(date.trim())}` : ""),
+    ),
+
+  /// GET /api/trackTrain/:trainNumber/:date
+  track: (trainNumber: string, date: string) =>
+    request(`/api/trackTrain/${seg(trainNumber)}/${seg(date)}`),
+
+  /// GET /api/checkPNRStatus/:pnr
+  pnr: (pnr: string) => request(`/api/checkPNRStatus/${seg(pnr)}`),
+
+  /// GET /api/getTrainInfo/:trainNumber
+  trainInfo: (trainNumber: string) =>
+    request(`/api/getTrainInfo/${seg(trainNumber)}`),
 };
 
 /// RailKit resolves (HTTP 200) with `{success:false, error:"..."}` instead of

@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/motion.dart';
+import 'rail_track/rail_track_layout.dart';
 
 /// Loading placeholder for the tracking screen: a hero-card bone plus several
 /// timeline row bones, with a continuous left-to-right gradient shimmer sweep
@@ -71,19 +72,21 @@ class SkeletonTimeline extends StatelessWidget {
     );
   }
 
+  /// One timeline row's bones.
+  ///
+  /// The gutter mimics the rail-track gutter it loads into — one bar and a
+  /// station dot, at the real painter's dimensions. A loading state that resolves
+  /// into a different shape reads as a layout jump, however brief.
   Widget _rowBone({bool emphasized = false}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Container(
-          width: emphasized ? 16 : 12,
-          height: emphasized ? 16 : 12,
-          decoration: BoxDecoration(
-            color: AppColors.surfaceHint,
-            shape: BoxShape.circle,
-          ),
+        SizedBox(
+          width: RailMetrics.gutterWidth,
+          height: 52,
+          child: CustomPaint(painter: _TrackBonePainter(pip: emphasized)),
         ),
-        const SizedBox(width: 20),
+        const SizedBox(width: 8),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -110,4 +113,49 @@ class SkeletonTimeline extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A bone version of the track gutter: one bar and a station dot.
+///
+/// Mirrors [RailTrackPainter] geometry — same [RailMetrics.barWidth], same
+/// centring, same [RailMetrics.dotSize] — because a loading state that resolves
+/// into a different shape reads as a layout jump. It previously drew the old
+/// two-rail tie ladder, which meant the skeleton showed a DOUBLE line that
+/// snapped to a single bar once data arrived.
+///
+/// Deliberately a single flat [AppColors.surfaceHint] so the shimmer sweeping
+/// over the whole column reads as one surface — nothing is known yet, so nothing
+/// should look decided.
+class _TrackBonePainter extends CustomPainter {
+  const _TrackBonePainter({required this.pip});
+
+  /// Draws the larger current-station pip on the emphasised row.
+  final bool pip;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final paint = Paint()..color = AppColors.surfaceHint;
+
+    // One bar, matching RailTrackPainter's width and centring exactly, with butt
+    // ends so consecutive bones abut into a continuous column.
+    canvas.drawRect(
+      Rect.fromLTRB(
+        cx - RailMetrics.barWidth / 2,
+        0,
+        cx + RailMetrics.barWidth / 2,
+        size.height,
+      ),
+      paint,
+    );
+
+    canvas.drawCircle(
+      Offset(cx, size.height / 2),
+      (pip ? RailMetrics.dotSize : RailMetrics.dotSize * 0.68) / 2,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TrackBonePainter old) => old.pip != pip;
 }

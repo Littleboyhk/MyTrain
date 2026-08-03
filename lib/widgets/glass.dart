@@ -44,10 +44,35 @@ const Color kGlassTintLight = Colors.white;
 /// Translucent gradient fill for a glass surface — brighter at the top-left,
 /// fading toward the bottom-right (as light would fall on it). Dark mode uses
 /// a HIGHER fill opacity than light (the aurora behind is darker).
-LinearGradient glassFillGradient(bool dark, {bool strong = false}) {
+///
+/// [blurless] is for surfaces that WANTED a backdrop blur and were denied one by
+/// [GlassQuality]. It is not the same thing as [strong], and not the same thing
+/// as a call site that asks for `blur: 0`:
+///
+/// * With blur, a 30–40% fill is enough, because the backdrop reaching the eye
+///   has already been smeared into unreadable mush by the filter.
+/// * Without blur, that same 30–40% is just a tinted window — text and rows
+///   behind a bottom nav or a modal sheet stay legible through it, which is the
+///   bug this tier exists to fix.
+///
+/// So the fill has to do the blur's job alone: opaque enough that nothing behind
+/// it can be read, while the gradient, rim and glow still make it a lit pane
+/// rather than a flat rectangle. The 4-point spread between [hi] and [lo] caps
+/// backdrop bleed at ~10% at the darkest corner.
+LinearGradient glassFillGradient(
+  bool dark, {
+  bool strong = false,
+  bool blurless = false,
+}) {
   final Color tint = dark ? kGlassTintDark : kGlassTintLight;
-  final double hi = dark ? (strong ? 0.42 : 0.34) : (strong ? 0.72 : 0.62);
-  final double lo = dark ? (strong ? 0.30 : 0.22) : (strong ? 0.52 : 0.42);
+  final double hi, lo;
+  if (blurless) {
+    hi = dark ? 0.94 : 0.96;
+    lo = dark ? 0.90 : 0.92;
+  } else {
+    hi = dark ? (strong ? 0.42 : 0.34) : (strong ? 0.72 : 0.62);
+    lo = dark ? (strong ? 0.30 : 0.22) : (strong ? 0.52 : 0.42);
+  }
   return LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
@@ -152,6 +177,20 @@ List<BoxShadow> glassGlow(bool dark, {bool raised = false}) {
 //
 // Touch feedback (iOS): AnimatedScale to 0.97 while pressed + a glow bump, an
 // InkWell bounded by the clip, and HapticFeedback.lightImpact() on tap.
+//
+// KNOWN GAP, DEFERRED ON PURPOSE — NOT AN OVERSIGHT TO "TIDY UP".
+// This widget is the one glass surface that is NOT wired into the GlassQuality
+// auto-degrade: it runs BackdropFilter unconditionally, so on a device slow
+// enough to trip the detector every other surface drops its blur and this one
+// keeps paying for it. It consequently never asks glassFillGradient for the
+// `blurless` tier either.
+//
+// Left as-is because there are only 2 call sites and changing it would alter
+// measured perf behaviour outside the scope of the pass that found it. When
+// picking this up: mirror GlassSurface — wrap build in a
+// ValueListenableBuilder<bool> on GlassQuality.instance.blurEnabled, skip the
+// BackdropFilter when it reports false, and pass `blurless:` to the fill so the
+// card does not turn into a transparent film. See LIQUID_GLASS_GUIDE.md §7.
 // ===========================================================================
 class GlassCard extends StatefulWidget {
   const GlassCard({

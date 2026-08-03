@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
 import 'glass_theme.dart';
@@ -11,7 +12,10 @@ import 'glass_theme.dart';
 class AppTheme {
   const AppTheme._();
 
-  static ThemeData themeFor(AppPalette p) {
+  /// [fontFamily] is the user's chosen Google font name (e.g. `'Poppins'`), or
+  /// null to keep the platform default (Roboto / .SF). Passed down from the
+  /// `appFont` setting in `main.dart`.
+  static ThemeData themeFor(AppPalette p, {String? fontFamily}) {
     final base = ThemeData(brightness: p.brightness, useMaterial3: true);
     final colorScheme = ColorScheme.fromSeed(
       seedColor: AppColors.accent,
@@ -28,7 +32,7 @@ class AppTheme {
       // Transparent so the global AuroraBackground shows through every route.
       scaffoldBackgroundColor: Colors.transparent,
       colorScheme: colorScheme,
-      textTheme: _textTheme(base.textTheme, p),
+      textTheme: _textTheme(base.textTheme, p, fontFamily),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
@@ -83,28 +87,37 @@ class AppTheme {
     'NotoSansOriya', // or
   ];
 
-  static TextTheme _textTheme(TextTheme base, AppPalette p) {
+  static TextTheme _textTheme(TextTheme base, AppPalette p, String? fontFamily) {
+    // When the user picks a Google font, resolve the whole base text theme
+    // through it first. `getTextTheme` registers the family and triggers its
+    // (cached, one-time) fetch; when the bytes arrive Flutter re-lays-out text
+    // via PaintingBinding.systemFonts, so no manual rebuild is needed. A null or
+    // unknown family leaves the engine default in place.
+    final TextTheme source = (fontFamily == null)
+        ? base
+        : GoogleFonts.getTextTheme(fontFamily, base);
+
     // NOTE: these four styles are deliberately rebuilt rather than copyWith'd
     // (that's pre-existing behaviour — it also drops fontSize), but the family
     // MUST be carried over. `bodyMedium` is what Material installs as the
     // ambient DefaultTextStyle, so if its fontFamily were null the fallback list
     // below would become the primary chain and every Latin glyph in the app
-    // would come from Noto Sans Devanagari instead of Roboto.
-    final String? family = base.bodyMedium?.fontFamily;
+    // would come from Noto Sans Devanagari instead of the chosen face.
+    final String? family = source.bodyMedium?.fontFamily;
 
-    return base
+    return source
         .copyWith(
           displayLarge: TextStyle(
-            fontFamily: base.displayLarge?.fontFamily,
+            fontFamily: family,
             fontWeight: FontWeight.w800,
             letterSpacing: -1.0,
           ),
           headlineSmall: TextStyle(
-            fontFamily: base.headlineSmall?.fontFamily,
+            fontFamily: family,
             fontWeight: FontWeight.w700,
           ),
           titleMedium: TextStyle(
-            fontFamily: base.titleMedium?.fontFamily,
+            fontFamily: family,
             fontWeight: FontWeight.w600,
           ),
           bodyMedium: TextStyle(
@@ -117,7 +130,8 @@ class AppTheme {
           displayColor: p.textPrimary,
           // App-wide: every Material text style carries the fallback, and since
           // inline `TextStyle(...)` widgets inherit from DefaultTextStyle
-          // (= bodyMedium) via merge, they pick it up too.
+          // (= bodyMedium) via merge, they pick it up too. Preserved under every
+          // font choice so Indic scripts never regress to tofu.
           fontFamilyFallback: indicFontFallback,
         );
   }

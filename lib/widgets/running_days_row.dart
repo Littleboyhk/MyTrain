@@ -46,10 +46,13 @@ class RunningDaysRow extends StatelessWidget {
     final g = context.glass;
     final t = L10n.of(context);
 
-    // Unknown schedule -> honest muted fallback, not a green "Daily".
+    // Unknown schedule -> honest muted fallback, not a green "Daily". And when
+    // even the label is absent, say so rather than render an empty line.
     if (train.runningDaysMask == null) {
       return Text(
-        train.daysLabel,
+        // Em dash matches the app's existing missing-data convention and stays
+        // locale-neutral; daysLabel itself is provider text, never localised.
+        train.daysLabel ?? '—',
         style: AppText.label.copyWith(color: g.textMuted, fontSize: 12.5),
       );
     }

@@ -6,8 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/delay_status.dart';
 import '../models/journey.dart';
 import '../models/live_position.dart';
+import '../models/station_live_status.dart';
 import '../models/tracking_state.dart';
 import '../models/train_summary.dart';
+import 'offline/cached_route.dart';
+import 'offline/connectivity_service.dart';
+import 'offline/offline_tracking_controller.dart';
+import 'offline/route_cache_store.dart';
 import 'railkit_mappers.dart';
 import 'railkit_service.dart';
 import 'railradar_mappers.dart';
@@ -66,15 +71,53 @@ class TrackingController extends Notifier<TrackingState> {
   /// Live status refresh cadence (server-side cache makes this cheap).
   static const Duration _livePoll = Duration(minutes: 4);
 
+  /// The journey key the offline tracker is filed under.
+  OfflineTrackingKey get _offlineKey =>
+      (number: arg.trainNumber, date: arg.date);
+
   @override
   TrackingState build() {
     ref.onDispose(() => _poll?.cancel());
+
+    // Offline handover. Losing the network switches the position source to
+    // on-device GPS; regaining it hands back to the API and releases the GPS,
+    // because running both would burn battery for no extra accuracy.
+    ref.listen<ConnectivityStatus>(connectivityProvider, (previous, next) {
+      if (previous == next) return;
+      final offline = ref.read(offlineTrackingProvider(_offlineKey).notifier);
+      if (next.isOffline) {
+        debugPrint('[Tracking] network ${next.name} — engaging offline '
+            'tracking for ${arg.trainNumber}');
+        offline.startIfPermitted();
+      } else {
+        debugPrint('[Tracking] network back — releasing GPS, resuming polls');
+        final stage = ref.read(offlineTrackingProvider(_offlineKey)).stage;
+        // An arrival is a finished journey, not something to restart.
+        if (stage != OfflineStage.arrived) offline.stop();
+        _applyLiveStatus(_journeyOrNull());
+      }
+    });
+
+    // Positions worked out on the device flow into the same state the rest of
+    // the app already renders.
+    ref.listen<OfflineTrackingState>(
+      offlineTrackingProvider(_offlineKey),
+      (previous, next) => _applyOfflinePosition(next),
+    );
+
     Future.microtask(_load);
     return const TrackingLoading();
   }
 
   RailKitService get _railkit => ref.read(railKitServiceProvider);
   RailRadarService get _railradar => ref.read(railRadarServiceProvider);
+
+  /// The route currently on screen, if any.
+  Journey? _journeyOrNull() => switch (state) {
+        TrackingReady(:final journey) => journey,
+        TrackingNoSignal(:final journey) => journey,
+        _ => null,
+      };
 
   /// Route detail from RailRadar: the full station list INCLUDING pass-through
   /// stops. Returns null (never throws) so a RailRadar outage or daily-quota
@@ -210,36 +253,180 @@ class TrackingController extends Notifier<TrackingState> {
         delayMinutes: 0,
         updatedAt: DateTime.now(),
       ),
+      source: PositionSource.scheduleOnly,
     );
+
+    // Bank the route for offline use. Deliberately not awaited: caching is a
+    // convenience for later, and the journey must not wait on a disk write.
+    _cacheRoute(journey);
 
     await _applyLiveStatus(journey);
     _poll?.cancel();
     _poll = Timer.periodic(_livePoll, (_) => _applyLiveStatus(journey));
   }
 
+  /// Persist the route so this journey keeps working without a connection.
+  ///
+  /// Coordinates are back-filled from the bundled station asset when the source
+  /// didn't supply them — RailKit's route has none, and without geometry there is
+  /// nothing for GPS to match against later.
+  Future<void> _cacheRoute(Journey journey) async {
+    try {
+      final withCoords = await backfillCoordinates(
+        CachedRoute.fromJourney(journey: journey, journeyDate: arg.date),
+      );
+      if (!withCoords.canMapMatch) {
+        debugPrint('[Tracking] ${arg.trainNumber} cached without usable '
+            'geometry (${withCoords.geocodedCount} of '
+            '${withCoords.stations.length} stations geocoded) — offline '
+            'positioning will be unavailable for it');
+      }
+      await ref.read(offlineRouteStoreProvider).saveRoute(withCoords);
+    } catch (e) {
+      // Never fatal: no cache simply means no offline capability.
+      debugPrint('[Tracking] could not cache route for ${arg.trainNumber}: $e');
+    }
+  }
+
+  /// Re-publish the journey using a position derived on the device.
+  ///
+  /// Only takes over when the offline tracker actually has a matched position.
+  /// Every other stage — acquiring, off-route, permission refused — leaves the
+  /// existing state untouched, so the screen keeps the last real figures and the
+  /// indicator explains the situation rather than the position vanishing.
+  void _applyOfflinePosition(OfflineTrackingState offline) {
+    final current = state;
+    if (current is! TrackingReady) return;
+    if (!offline.hasPosition) return;
+    // While the network is healthy the API is authoritative.
+    if (ref.read(connectivityProvider).isUsable) return;
+
+    final stations = current.journey.stations;
+    final delay = current.position.delayMinutes;
+
+    state = TrackingReady(
+      journey: current.journey,
+      position: LivePosition(
+        fromIndex: offline.fromIndex!.clamp(0, stations.length - 1),
+        segmentProgress: offline.segmentProgress!.clamp(0.0, 1.0),
+        status: current.position.status,
+        delayMinutes: delay,
+        updatedAt: offline.lastFixAt ?? DateTime.now(),
+      ),
+      // Not `live`: this is the device's own estimate, not a network fix, and the
+      // badge must not claim otherwise.
+      live: false,
+      source: PositionSource.offlineGps,
+      lastSyncedAt: offline.lastSyncedAt ?? current.lastSyncedAt,
+      measuredSpeedKmh: offline.speedKmh,
+      etaOverrideMinutes: offline.eta.minutes,
+    );
+  }
+
   /// Overlay real live position/delay onto the (already validated) route.
   /// A live-status failure never invalidates the route — we keep showing the
   /// real schedule and simply report no live fix.
-  Future<void> _applyLiveStatus(Journey journey) async {
+  Future<void> _applyLiveStatus(Journey? incoming) async {
+    if (incoming == null) return;
+    // Reassignable so the coach sequence can be folded in below without a second
+    // request. The parameter itself stays final.
+    var journey = incoming;
+
+    final connectivity = ref.read(connectivityProvider.notifier);
+
+    // A poll with no transport is a guaranteed failure that still costs a
+    // timeout and a wake-up. Skip it and let the offline path hold the screen.
+    if (ref.read(connectivityProvider) == ConnectivityStatus.transportDown) {
+      debugPrint('[Tracking] no transport — skipping live poll for '
+          '${arg.trainNumber}');
+      return;
+    }
+
     RailkitLiveStatus? live;
+    var reachable = false;
+    // The raw trackTrain body, kept so the coach sequence can be read out of the
+    // response we are already paying for.
+    dynamic trackData;
     try {
       final res = await _railkit.trackTrain(
         trainNumber: arg.trainNumber,
         date: arg.date,
       );
+      // The request completed, so the network is genuinely usable — true even
+      // when the answer is "schedule only", which is data, not a failure.
+      reachable = true;
+      trackData = res.data;
       // `track-train` reports source:"schedule" when RailKit had no running
       // status for this date — real route, no live fix.
       live = res.isScheduleOnly ? null : liveStatusFromRailkitTrack(res.data);
+    } on RailKitException catch (e) {
+      // A typed rejection means a server actually answered — quota exhausted,
+      // key refused, function not deployed. The pipe works, so this must not be
+      // reported as offline: doing so would engage GPS tracking for a problem
+      // GPS cannot solve. Only `unknown` might be a genuine transport failure.
+      reachable = e.code != RailKitErrorCode.unknown;
+      debugPrint('[Tracking] live status rejected for ${arg.trainNumber}: $e');
+      live = null;
     } catch (e) {
       debugPrint('[Tracking] live status unavailable for '
           '${arg.trainNumber} on ${arg.date}: $e');
       live = null;
     }
 
+    // FREE COACH DATA — NO SECOND REQUEST, NO QUOTA.
+    //
+    // `trackTrain` was already fetched just above for live status, and the same
+    // payload carries the rake composition. So when the route source supplied no
+    // sequence — RailKit's `getTrainInfo` never does, and RailRadar omits it for
+    // some trains — it is taken from the body already in hand. There is
+    // deliberately no discretionary fetch here to guard with a quota floor,
+    // because adding one would spend a monthly call to obtain something this
+    // response already contains.
+    if (journey.coachPosition == null && trackData != null) {
+      final seq = coachPositionFromRailkitTrack(trackData);
+      if (seq != null) {
+        journey = Journey(
+          trainNumber: journey.trainNumber,
+          trainName: journey.trainName,
+          stations: journey.stations,
+          coachPosition: seq,
+        );
+        debugPrint('[Tracking] coach sequence for ${arg.trainNumber} recovered '
+            'from the trackTrain payload (${seq.split('-').length} vehicles) — '
+            'no extra RailKit request');
+      }
+    }
+
+    connectivity.reportReachability(reachable: reachable);    if (reachable) {
+      ref
+          .read(offlineTrackingProvider(_offlineKey).notifier)
+          .noteSynced(delayMinutes: live?.delayMinutes);
+    }
+
     final current = state;
     if (current is! TrackingReady && current is! TrackingNoSignal) return;
 
+    final syncedAt = reachable
+        ? DateTime.now()
+        : (current is TrackingReady ? current.lastSyncedAt : null);
+
     if (live == null || !live.started) {
+      // A position the device worked out for itself is better than resetting to
+      // the origin. Without this guard, one failed poll on a flaky connection
+      // would throw away the offline fix and snap the train back to station 0.
+      if (current is TrackingReady && current.isOfflinePosition) {
+        state = TrackingReady(
+          journey: journey,
+          position: current.position,
+          live: false,
+          source: PositionSource.offlineGps,
+          lastSyncedAt: syncedAt,
+          measuredSpeedKmh: current.measuredSpeedKmh,
+          etaOverrideMinutes: current.etaOverrideMinutes,
+        );
+        return;
+      }
+
       // Keep showing the REAL route; just mark it as not live so the badge
       // reads OFFLINE. (We deliberately don't switch to the "signal lost"
       // empty state — the verified route is still worth showing.)
@@ -253,6 +440,8 @@ class TrackingController extends Notifier<TrackingState> {
           updatedAt: DateTime.now(),
         ),
         live: false,
+        source: PositionSource.scheduleOnly,
+        lastSyncedAt: syncedAt,
       );
       return;
     }
@@ -267,7 +456,7 @@ class TrackingController extends Notifier<TrackingState> {
     }
 
     state = TrackingReady(
-      journey: journey,
+      journey: _withStationStatus(journey, live),
       position: LivePosition(
         fromIndex: index.clamp(0, journey.stations.length - 1),
         segmentProgress: 0,
@@ -278,6 +467,47 @@ class TrackingController extends Notifier<TrackingState> {
         updatedAt: DateTime.now(),
       ),
       live: true, // confirmed real running status
+      source: PositionSource.liveApi,
+      lastSyncedAt: syncedAt,
+    );
+  }
+
+  /// Merge RailKit's per-station timing onto the rendered route.
+  ///
+  /// The two station lists do not line up, and cannot be made to. The route is
+  /// normally RailRadar's, which includes pass-through points (320 entries for
+  /// 16332, of which 278 are pass-through), while RailKit's `trackTrain` timeline
+  /// carries times only on its `stoppage` entries. Matching is therefore by
+  /// station code, upper-cased on both sides.
+  ///
+  /// DEGRADES PER STATION, NOT PER SCREEN. A station RailKit said nothing about
+  /// is marked [StationLiveStage.unreported] and renders scheduled times only.
+  /// One unmatched code never suppresses actuals for the stations that did match.
+  Journey _withStationStatus(Journey journey, RailkitLiveStatus live) {
+    if (live.stationStatus.isEmpty) return journey;
+
+    var matched = 0;
+    final stations = journey.stations.map((s) {
+      final status = live.stationStatus[s.code.toUpperCase()];
+      if (status == null) {
+        return s.withLive(StationLiveStatus.unreported(s.code));
+      }
+      matched++;
+      return s.withLive(status);
+    }).toList();
+
+    debugPrint('[Tracking] per-station live timing: matched $matched of '
+        '${journey.stations.length} route stations against '
+        '${live.stationStatus.length} RailKit stoppages');
+
+    return Journey(
+      trainNumber: journey.trainNumber,
+      trainName: journey.trainName,
+      stations: stations,
+      // Must be carried through: this rebuild happens on every live poll, and
+      // dropping it here would silently empty the Coach Position screen the
+      // moment a status arrived.
+      coachPosition: journey.coachPosition,
     );
   }
 

@@ -339,11 +339,143 @@ abstract class L10n {
   /// **'{count} matching \"{query}\"'**
   String countMatching(int count, Object query);
 
+  /// No description provided for @sectionPersonal.
+  ///
+  /// In en, this message translates to:
+  /// **'PERSONAL'**
+  String get sectionPersonal;
+
+  /// No description provided for @sectionSpot.
+  ///
+  /// In en, this message translates to:
+  /// **'SPOT SETTINGS'**
+  String get sectionSpot;
+
+  /// No description provided for @sectionSpeedometer.
+  ///
+  /// In en, this message translates to:
+  /// **'SPEEDOMETER SETTINGS'**
+  String get sectionSpeedometer;
+
+  /// No description provided for @sectionAlarm.
+  ///
+  /// In en, this message translates to:
+  /// **'ALARM SETTINGS'**
+  String get sectionAlarm;
+
+  /// No description provided for @timeSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Time settings'**
+  String get timeSettings;
+
+  /// No description provided for @timeSettingsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Show times as AM/PM instead of 24-hour'**
+  String get timeSettingsHint;
+
+  /// No description provided for @insideTrainSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you inside train option'**
+  String get insideTrainSetting;
+
+  /// No description provided for @insideTrainSettingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Suggest sharing your location when a journey opens'**
+  String get insideTrainSettingHint;
+
+  /// No description provided for @spotNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Spot notifications'**
+  String get spotNotifications;
+
+  /// No description provided for @spotNotificationsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Your location as a standing notification'**
+  String get spotNotificationsHint;
+
+  /// Shown instead of the normal hint when a standing notification cannot be delivered on this platform.
+  ///
+  /// In en, this message translates to:
+  /// **'Not available in this build — needs a notification plugin, and has no web equivalent'**
+  String get spotNotificationsUnsupported;
+
+  /// No description provided for @speedometerSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Speedometer (Beta)'**
+  String get speedometerSetting;
+
+  /// No description provided for @speedometerSettingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Show live GPS speed while tracking'**
+  String get speedometerSettingHint;
+
+  /// No description provided for @speedometerRequiresGps.
+  ///
+  /// In en, this message translates to:
+  /// **'Appears on the tracking screen once you start sharing your location in GPS mode, which is where the speed reading comes from.'**
+  String get speedometerRequiresGps;
+
+  /// No description provided for @alarmTone.
+  ///
+  /// In en, this message translates to:
+  /// **'Alarm tone'**
+  String get alarmTone;
+
+  /// No description provided for @alarmToneChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Alarm tone set to {tone}'**
+  String alarmToneChanged(String tone);
+
+  /// No description provided for @alarmTonePlaybackNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Select an alarm tone to preview and set your preferred sound.'**
+  String get alarmTonePlaybackNote;
+
   /// No description provided for @noTrainsMatch.
   ///
   /// In en, this message translates to:
   /// **'No trains match your filters'**
   String get noTrainsMatch;
+
+  /// Shown when a train-number lookup completed successfully but no such train exists.
+  ///
+  /// In en, this message translates to:
+  /// **'Train {number} not found'**
+  String trainNotFound(String number);
+
+  /// No description provided for @trainNotFoundHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Check the number and try again'**
+  String get trainNotFoundHint;
+
+  /// Shown when a train-number lookup could not be completed at all (offline, quota, server error). Deliberately different from trainNotFound, because the user's next action is to retry rather than to correct the number.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check right now'**
+  String get trainLookupFailed;
+
+  /// No description provided for @trainLookupFailedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong reaching the railway data. Try again in a moment.'**
+  String get trainLookupFailedHint;
+
+  /// No description provided for @searchingTrain.
+  ///
+  /// In en, this message translates to:
+  /// **'Looking up train {number}…'**
+  String searchingTrain(String number);
 
   /// No description provided for @statusOnTime.
   ///

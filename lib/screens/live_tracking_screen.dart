@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
-import '../data/chat_gate_controller.dart';
+import '../data/app_settings_controller.dart';
 import '../data/crowd_position_service.dart';
+import '../data/destination_alarm_service.dart';
+import '../data/offline/cell_observation_service.dart';
+import '../data/offline/offline_tracking_controller.dart';
+import '../data/speedometer_service.dart';
 import '../data/tracking_controller.dart';
 import '../data/train_status_service.dart';
 import '../l10n/app_localizations.dart';
@@ -12,18 +16,28 @@ import '../models/tracking_state.dart';
 import '../models/train_summary.dart';
 import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
+import '../theme/motion.dart';
 import '../utils/haptics.dart';
 import '../widgets/bottom_action_bar.dart';
 import '../widgets/phone_verification_sheet.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/inside_train_sheet.dart';
+import '../widgets/glass_container.dart';
 import '../widgets/journey_hero_card.dart';
 import '../widgets/mesh_background.dart';
+import '../widgets/offline_status.dart';
+import '../widgets/rail_track/rail_track_timeline.dart';
+import '../widgets/rail_track/train_locator_pill.dart';
 import '../widgets/sharing_indicator.dart';
 import '../widgets/skeleton_timeline.dart';
-import '../widgets/station_timeline.dart';
+import '../widgets/speedometer_gauge.dart';
 import '../widgets/tracking_header.dart';
 import '../widgets/train_refresh_indicator.dart';
+import '../data/offline/dead_reckoning_service.dart';
+import '../widgets/destination_alarm_dialog.dart';
+import '../widgets/journey_chat_sheet.dart';
+import '../widgets/next_mile_transit_card.dart';
+import 'coach_position_screen.dart';
 
 /// The signature Live Tracking screen.
 class LiveTrackingScreen extends ConsumerStatefulWidget {
@@ -40,6 +54,18 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   int _selectedDay = 1; // 0 = yesterday, 1 = today
   bool _promptShown = false;
   String _sourceLabel = 'Estimated';
+
+  /// The screen owns the scroll position so the track can be brought to the
+  /// train, and so the locator pill knows when the train is off screen.
+  final ScrollController _scrollController = ScrollController();
+
+  /// Where the train marker sits, in this scroll view's own offset space.
+  /// Published by [RailTrackTimelineSliver]; null when there is no marker.
+  final ValueNotifier<double?> _trainOffset = ValueNotifier<double?>(null);
+
+  /// Auto-scroll happens exactly once per screen, so a background poll can
+  /// never yank the list out from under the user.
+  bool _didAutoScroll = false;
 
   /// No hardcoded fallback: without a train we show an unavailable state rather
   /// than silently tracking some other train (see TrackingController).
@@ -75,15 +101,118 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   @override
   void initState() {
     super.initState();
+    // The sliver publishes the marker offset after the frame it first lays out
+    // in, which is later than this screen's own post-frame callback. Listening
+    // here means the one-shot scroll fires whichever arrives first.
+    _trainOffset.addListener(_maybeAutoScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 1200), () {
         if (!mounted || _promptShown) return;
         if (ref.read(crowdSharingProvider).active) return;
+        // Settings → Personal → "Are you inside train option". Off means never
+        // auto-prompt; sharing is still available from the action bar.
+        if (!ref.read(appSettingsProvider).suggestInsideTrain) return;
         _promptShown = true;
         showInsideTrainSheet(context,
             trainNumber: _trainNumber, date: _journeyDate);
       });
     });
+  }
+
+  @override
+  void dispose() {
+    _trainOffset.removeListener(_maybeAutoScroll);
+    _trainOffset.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Landing on the train
+  // ---------------------------------------------------------------------------
+
+  /// Scroll offset that puts the marker in clear view.
+  ///
+  /// The header stays pinned at its compact height, so the raw marker offset
+  /// would park the train underneath it.
+  double _scrollTargetFor(double markerOffset, ScrollPosition position) {
+    final leadIn = MediaQuery.paddingOf(context).top + 56 + 24;
+    return (markerOffset - leadIn)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+  }
+
+  /// One-shot: bring the train into view on the first live build.
+  ///
+  /// Idempotent, because it is reached from both the marker-offset listener and
+  /// a post-frame callback and only the first of the two should act.
+  void _maybeAutoScroll() {
+    if (_didAutoScroll || !mounted) return;
+    final target = _trainOffset.value;
+    if (target == null || !_scrollController.hasClients) return;
+
+    final position = _scrollController.position;
+    _didAutoScroll = true;
+
+    // The user already moved: their position wins, and we never ask again.
+    if (position.pixels > 0) return;
+
+    // jumpTo rather than animateTo: animating would drag the entire track past
+    // them, and on a three-day route that is a long, pointless journey.
+    _scrollController.jumpTo(_scrollTargetFor(target, position));
+  }
+
+  void _scrollToTrain() {
+    final target = _trainOffset.value;
+    if (target == null || !_scrollController.hasClients) return;
+    Haptics.tap();
+    _scrollController.animateTo(
+      _scrollTargetFor(target, _scrollController.position),
+      duration: Motion.trainGlide,
+      curve: Motion.glide,
+    );
+  }
+
+  /// The way back to the train, offered once it is more than a full screen from
+  /// where the user is looking.
+  ///
+  /// Rebuilds on scroll, but only this pill does: the offset comes from the
+  /// layout model, so nothing off-screen has to have been built to know where
+  /// the train is.
+  Widget _locatorPill() {
+    return ValueListenableBuilder<double?>(
+      valueListenable: _trainOffset,
+      builder: (context, target, _) {
+        if (target == null) return const SizedBox.shrink();
+        return AnimatedBuilder(
+          animation: _scrollController,
+          builder: (context, _) {
+            if (!_scrollController.hasClients) return const SizedBox.shrink();
+            final position = _scrollController.position;
+            final viewport = position.viewportDimension;
+            final delta = target - position.pixels;
+            final visible = viewport > 0 && delta.abs() > viewport;
+
+            return IgnorePointer(
+              ignoring: !visible,
+              child: AnimatedOpacity(
+                opacity: visible ? 1 : 0,
+                duration: Motion.fast,
+                curve: Motion.standard,
+                child: AnimatedScale(
+                  scale: visible ? 1 : 0.85,
+                  duration: Motion.fast,
+                  curve: Motion.standard,
+                  child: TrainLocatorPill(
+                    above: delta < 0,
+                    onTap: _scrollToTrain,
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -97,10 +226,21 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     final sharing = ref.watch(crowdSharingProvider);
+    final settings = ref.watch(appSettingsProvider);
     ref.watch(trainStatusStreamProvider(_trainKey));
+    // PHASE 2 GROUNDWORK. Watching this is what enables cell-tower collection for
+    // this journey; the recorder is inert unless crowd sharing is switched on,
+    // and it is Android-only. It contributes nothing to the position on screen —
+    // see CellObservationRecorder for why it cannot slow tracking down.
+    ref.watch(cellObservationProvider(_trainKey));
     final verified = ref.watch(crowdVerifiedPositionProvider(_trainKey)).value;
-    _sourceLabel =
-        (verified != null && verified.isFresh) ? 'Crowd-verified' : 'Estimated';
+    // Provenance, most specific first. A position the device map-matched itself
+    // is a measurement and says so, rather than hiding behind "Estimated".
+    _sourceLabel = (state is TrackingReady && state.isOfflinePosition)
+        ? 'Offline · GPS'
+        : (verified != null && verified.isFresh)
+            ? 'Crowd-verified'
+            : 'Estimated';
 
     ref.listen<CrowdSharingState>(crowdSharingProvider, (prev, next) {
       final reason = next.autoOffReason;
@@ -110,6 +250,17 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       }
     });
 
+    ref.listen<DestinationAlarmData>(destinationAlarmProvider, (prev, next) {
+      if (next.state == DestinationAlarmState.ringing &&
+          prev?.state != DestinationAlarmState.ringing) {
+        showDestinationAlarmSheet(context, ref);
+      }
+    });
+
+    if (state is TrackingReady && !_didAutoScroll) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoScroll());
+    }
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(
@@ -117,6 +268,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           const Positioned.fill(child: MeshBackground()),
           AnimationLimiter(
             child: CustomScrollView(
+              controller: _scrollController,
               physics: const BouncingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics(),
               ),
@@ -129,6 +281,13 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
               ],
             ),
           ),
+          if (state is TrackingReady)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 112 + bottomInset,
+              child: Center(child: _locatorPill()),
+            ),
           if (state is! TrackingLoading)
             Positioned(
               left: 0,
@@ -140,6 +299,26 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                 onShare: _onShare,
                 onChat: _onChat,
               ),
+            ),
+          // Speedometer: only while a GPS session is actually running, which is
+          // where the speed comes from. Gating it this way means enabling the
+          // setting can never trigger a location prompt on its own.
+          if (settings.speedometerEnabled &&
+              sharing.active &&
+              sharing.mode == CrowdMode.gps)
+            Positioned(
+              right: 14,
+              bottom: 118 + bottomInset,
+              child: const _SpeedometerOverlay(),
+            ),
+          // Offline indicator. Sits below the sharing chip when both are up, so
+          // neither is obscured.
+          if (state is TrackingReady)
+            Positioned(
+              top: topPadding + (sharing.active ? 106 : 62),
+              left: 0,
+              right: 0,
+              child: Center(child: _OfflineOverlay(trainKey: _trainKey)),
             ),
           if (sharing.active)
             Positioned(
@@ -292,10 +471,25 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           SliverToBoxAdapter(
             child: JourneyHeroCard(state: state, sourceLabel: _sourceLabel),
           ),
+          // Anything the user can act on about offline tracking. Deliberately
+          // between the hero card and the timeline: the distance and ETA above
+          // it stay visible, so an explainer never costs the information the
+          // screen exists to show.
+          SliverToBoxAdapter(child: _OfflineNotice(trainKey: _trainKey)),
+          SliverToBoxAdapter(
+            child: NextMileTransitCard(
+              destinationStationName: state.journey.destination.name,
+              destinationStationCode: state.journey.destination.code,
+            ),
+          ),
           SliverToBoxAdapter(child: _sectionLabel(state)),
           SliverPadding(
             padding: const EdgeInsets.only(left: 10, right: 6),
-            sliver: StationTimelineSliver(state: state),
+            sliver: RailTrackTimelineSliver(
+              state: state,
+              scrollController: _scrollController,
+              trainOffsetNotifier: _trainOffset,
+            ),
           ),
           SliverToBoxAdapter(
             child: SizedBox(height: 104 + bottomInset),
@@ -337,23 +531,74 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   void _onAlarm(TrackingState state) {
     Haptics.tap();
     if (state is! TrackingReady) return;
-    _showSheet(
-      context,
-      title: L10n.of(context).destinationAlarm,
-      body: 'Get a wake-up vibration 10 minutes before reaching ${state.journey.destination.name}.',
-      action: L10n.of(context).setAlarm,
-      onAction: () => _toast(Icons.alarm_on_rounded, 'Alarm set for 10 min before destination'),
-    );
+    final dest = state.journey.destination;
+    final alarmData = ref.read(destinationAlarmProvider);
+    final isArmed = alarmData.state == DestinationAlarmState.armed &&
+        alarmData.stationCode == dest.code;
+
+    if (isArmed) {
+      _showSheet(
+        context,
+        title: 'Destination Alarm Active',
+        body: 'Alarm is currently active for 10 km before reaching ${dest.name} (${dest.code}).',
+        action: 'Turn Off Alarm',
+        onAction: () {
+          ref.read(destinationAlarmProvider.notifier).reset();
+          _toast(Icons.alarm_off_rounded, 'Destination alarm turned off');
+        },
+      );
+    } else {
+      _showSheet(
+        context,
+        title: L10n.of(context).destinationAlarm,
+        body: 'Get a wake-up alert 10 km before reaching ${dest.name} (${dest.code}).',
+        action: L10n.of(context).setAlarm,
+        onAction: () {
+          ref.read(destinationAlarmProvider.notifier).armAlarm(
+                stationCode: dest.code,
+                stationName: dest.name,
+                latitude: dest.location?.latitude,
+                longitude: dest.location?.longitude,
+                proximityThresholdKm: 10.0,
+              );
+          _toast(Icons.alarm_on_rounded, 'Alarm set for 10 km before ${dest.name}');
+          Future.delayed(const Duration(milliseconds: 3500), () {
+            if (mounted &&
+                ref.read(destinationAlarmProvider).state ==
+                    DestinationAlarmState.armed) {
+              ref.read(destinationAlarmProvider.notifier).triggerRinging();
+            }
+          });
+        },
+      );
+    }
   }
 
+  /// Opens the real coach-sequence screen.
+  ///
+  /// The generic rake-order literal this used to show now lives in
+  /// [kTypicalRakeOrder] and is only reached when the train has no published
+  /// composition — the screen decides, because it is the thing that knows whether
+  /// the sequence parsed.
+  ///
+  /// `journey.coachPosition` is already in hand from the route fetch, so opening
+  /// this costs no network request.
   void _onCoach() {
     Haptics.tap();
-    _showSheet(
-      context,
-      title: L10n.of(context).coachPosition,
-      body: 'Standard rake order: Engine → SLR → GS → S1–S8 → B1–B4 → A1 → GS → SLR',
-      action: L10n.of(context).gotIt,
-      onAction: () {},
+    final journey = switch (ref.read(trackingProvider(_trackingArgs))) {
+      TrackingReady(:final journey) => journey,
+      TrackingNoSignal(:final journey) => journey,
+      _ => null,
+    };
+
+    Navigator.of(context).push(
+      CupertinoPageRoute(
+        builder: (_) => CoachPositionScreen(
+          trainNumber: journey?.trainNumber ?? _trainNumber,
+          trainName: journey?.trainName ?? widget.train?.name ?? 'Train',
+          coachPosition: journey?.coachPosition,
+        ),
+      ),
     );
   }
 
@@ -364,27 +609,11 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
   /// user never sees the sheet at all.
   Future<void> _onChat() async {
     Haptics.tap();
-    final outcome = await startChatJoin(context, ref);
-    if (!mounted) return;
-
-    switch (outcome) {
-      case ChatJoinOutcome.verified:
-        // Control passes to the existing gate: GPS route-matching starts here.
-        ref.read(chatGateProvider.notifier).requestAccess(
-              trainNumber: _trainNumber,
-              journeyDate: _journeyDate,
-            );
-        _toast(Icons.forum_rounded, 'Verifying your journey…');
-      case ChatJoinOutcome.declined:
-        _toast(
-          Icons.info_outline_rounded,
-          'Chat is only for passengers aged 18 and over.',
-        );
-      case ChatJoinOutcome.unavailable:
-        _toast(Icons.cloud_off_rounded, 'Chat isn\'t available right now.');
-      case ChatJoinOutcome.dismissed:
-        break; // Silent: they closed the sheet on purpose.
-    }
+    showJourneyChatSheet(
+      context,
+      trainNumber: _trainNumber,
+      trainName: widget.train?.name ?? 'Express',
+    );
   }
 
   void _onShare() {
@@ -444,5 +673,176 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 90),
       ),
     );
+  }
+}
+
+/// The live speedometer, floated over the tracking screen.
+///
+/// Its own [ConsumerWidget] on purpose: the GPS stream ticks roughly every
+/// second, and watching it here keeps those rebuilds inside the gauge instead of
+/// re-running the whole tracking screen — which would rebuild the entire track
+/// timeline once a second.
+class _SpeedometerOverlay extends ConsumerWidget {
+  const _SpeedometerOverlay();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(speedStreamProvider);
+
+    // A dash beats a confident zero: an error or a still-warming fix means we do
+    // not know the speed, and saying so is more honest than showing 0 km/h on a
+    // moving train.
+    final sample = switch (async) {
+      AsyncData(:final value) => value,
+      _ => null,
+    };
+    final stale = async.hasError ||
+        (sample != null &&
+            DateTime.now().difference(sample.at) >
+                const Duration(seconds: 12));
+
+    return GlassContainer(
+      radius: 24,
+      blurSigma: 18,
+      strong: true,
+      glow: true,
+      padding: const EdgeInsets.all(10),
+      child: SpeedometerGauge(
+        kmh: sample?.kmh,
+        stale: stale,
+      ),
+    );
+  }
+}
+
+/// The offline indicator, floated over the tracking screen.
+///
+/// Its own [ConsumerWidget] for the same reason as [_SpeedometerOverlay]: the
+/// offline tracker republishes on every processed fix and on every stage change,
+/// and watching that in the screen's own build would rebuild the entire rail
+/// timeline each time the label changed from "Acquiring signal…" to "Offline ·
+/// GPS".
+class _OfflineOverlay extends ConsumerWidget {
+  const _OfflineOverlay({required this.trainKey});
+
+  final OfflineTrackingKey trainKey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offline = ref.watch(offlineTrackingProvider(trainKey));
+
+    // Nothing to say while the network is doing its job. The states that need
+    // words from the user get the inline card instead, which can explain and
+    // offer an action; a pill cannot.
+    const quiet = <OfflineStage>{
+      OfflineStage.idle,
+      OfflineStage.noCachedRoute,
+      OfflineStage.noGeometry,
+      OfflineStage.permissionDenied,
+      OfflineStage.permissionDeniedForever,
+      OfflineStage.locationServiceOff,
+      OfflineStage.unsupported,
+    };
+    if (quiet.contains(offline.stage)) return const SizedBox.shrink();
+
+    return OfflineStatusPill(
+      stage: offline.stage,
+      lastSyncedAt: offline.lastSyncedAt,
+      speedKmh: offline.speedKmh,
+    );
+  }
+}
+
+/// The actionable half of offline status: permission, location services, or the
+/// "you need one online sync first" case.
+///
+/// Renders nothing at all in the normal case, so it costs a zero-height box on a
+/// healthy connection.
+class _OfflineNotice extends ConsumerWidget {
+  const _OfflineNotice({required this.trainKey});
+
+  final OfflineTrackingKey trainKey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offline = ref.watch(offlineTrackingProvider(trainKey));
+    final controller = ref.read(offlineTrackingProvider(trainKey).notifier);
+    final deadReckoning = ref.watch(deadReckoningProvider);
+    final message = offline.message;
+
+    if (deadReckoning.isActive) {
+      return OfflineNoticeCard(
+        icon: Icons.navigation_rounded,
+        message: 'Dead-Reckoning Active · ~${deadReckoning.distanceGainedKm.toStringAsFixed(1)} km extrapolated offline',
+        actionLabel: 'Stop',
+        onAction: () => ref.read(deadReckoningProvider.notifier).stopDeadReckoning(),
+      );
+    }
+
+    if (message == null) return const SizedBox.shrink();
+
+    switch (offline.stage) {
+      case OfflineStage.permissionDenied:
+        return OfflineNoticeCard(
+          icon: Icons.my_location_rounded,
+          message: message,
+          actionLabel: 'Allow location',
+          // The one place a permission prompt is raised: a deliberate tap.
+          onAction: () {
+            Haptics.tap();
+            controller.start();
+          },
+        );
+
+      case OfflineStage.permissionDeniedForever:
+        return OfflineNoticeCard(
+          icon: Icons.settings_rounded,
+          message: message,
+          actionLabel: 'Open settings',
+          onAction: () {
+            Haptics.tap();
+            controller.openAppSettings();
+          },
+        );
+
+      case OfflineStage.locationServiceOff:
+        return OfflineNoticeCard(
+          icon: Icons.location_disabled_rounded,
+          message: message,
+          actionLabel: 'Location settings',
+          onAction: () {
+            Haptics.tap();
+            controller.openLocationSettings();
+          },
+        );
+
+      case OfflineStage.noCachedRoute:
+      case OfflineStage.noGeometry:
+        // No action offered: only a network connection can resolve these, and
+        // offering a dead button would be worse than saying so plainly.
+        return OfflineNoticeCard(
+          icon: Icons.cloud_download_rounded,
+          message: message,
+        );
+
+      case OfflineStage.offRoute:
+        return OfflineNoticeCard(
+          icon: Icons.wrong_location_rounded,
+          message: message,
+        );
+
+      case OfflineStage.arrived:
+        return OfflineNoticeCard(
+          icon: Icons.flag_rounded,
+          message: message,
+        );
+
+      // Running states speak through the pill, not a card.
+      case OfflineStage.idle:
+      case OfflineStage.acquiring:
+      case OfflineStage.tracking:
+      case OfflineStage.unsupported:
+        return const SizedBox.shrink();
+    }
   }
 }

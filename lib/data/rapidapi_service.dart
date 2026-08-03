@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import '../models/pnr_status.dart';
 import '../models/rail_station.dart';
 import '../models/train_summary.dart';
+import '../utils/train_type_helper.dart';
 import 'train_repository.dart';
 
 /// Exception thrown when RapidAPI operations fail.
@@ -120,11 +121,10 @@ class RapidApiService {
           .get(uri, headers: _headers)
           .timeout(const Duration(seconds: 12));
 
-      // Print raw first API response to console/log for verification
-      debugPrint('==================== [RAPIDAPI RAW FIRST RESPONSE] ====================');
-      debugPrint('HTTP Status Code: ${response.statusCode}');
-      debugPrint('Response Body:\n${response.body}');
-      debugPrint('======================================================================');
+      // Search responses carry timetables rather than personal data, but they are
+      // logged by shape too — one convention for the file, and a full body dump
+      // is how the PNR leak got there in the first place.
+      _logShape('trainsBetweenStations', response.statusCode, response.body);
 
       if (response.statusCode == 429) {
         throw const RapidApiException(
@@ -284,34 +284,7 @@ class RapidApiService {
   }
 
   String _inferTrainType(String name, String rawType) {
-    final lowerName = name.toLowerCase();
-    final lowerType = rawType.toLowerCase();
-
-    if (lowerName.contains('rajdhani') || lowerType.contains('rajdhani')) {
-      return 'Rajdhani';
-    }
-    if (lowerName.contains('shatabdi') || lowerType.contains('shatabdi')) {
-      return 'Shatabdi';
-    }
-    if (lowerName.contains('vande bharat') || lowerType.contains('vande bharat')) {
-      return 'Vande Bharat';
-    }
-    if (lowerName.contains('duronto') || lowerType.contains('duronto')) {
-      return 'Duronto';
-    }
-    if (lowerName.contains('intercity') || lowerType.contains('intercity')) {
-      return 'Intercity';
-    }
-    if (lowerName.contains('superfast') ||
-        lowerName.contains(' sf ') ||
-        lowerType.contains('superfast')) {
-      return 'Superfast';
-    }
-    if (lowerName.contains('mail') || lowerType.contains('mail')) {
-      return 'Mail';
-    }
-
-    return rawType.isNotEmpty ? rawType : 'Express';
+    return TrainTypeHelper.inferType(name, rawType);
   }
 
   /// Real PNR status lookup from RapidAPI.
@@ -325,17 +298,19 @@ class RapidApiService {
       'pnrNumber': cleanPnr,
     });
 
-    debugPrint('[RapidAPI PNR Request] GET ${uri.toString()}');
+    // Path only. The full URI carries `?pnrNumber=...`, and a PNR is enough on
+    // its own to look up a booking and its passengers.
+    debugPrint('[RapidAPI] PNR lookup requested (${uri.path})');
 
     try {
       final response = await _client
           .get(uri, headers: _headers)
           .timeout(const Duration(seconds: 12));
 
-      debugPrint('==================== [RAPIDAPI PNR RAW RESPONSE] ====================');
-      debugPrint('HTTP Status Code: ${response.statusCode}');
-      debugPrint('Response Body:\n${response.body}');
-      debugPrint('====================================================================');
+      // Shape, never content. This printed the entire response body, which for a
+      // PNR includes each passenger's booking and current status strings — coach,
+      // berth and queue position per person — straight into the device log.
+      _logShape('PNR', response.statusCode, response.body);
 
       if (response.statusCode == 429) {
         throw const RapidApiException(
@@ -355,9 +330,53 @@ class RapidApiService {
     } on SocketException {
       throw const RapidApiException('Network error connecting to PNR service.');
     } catch (e) {
-      debugPrint('[RapidAPI PNR Error] $e');
-      throw RapidApiException('PNR lookup failed: ${e.toString()}');
+      // A decode failure can quote the offending source, so redact before it
+      // reaches the log or the exception message the UI may surface.
+      debugPrint('[RapidAPI] PNR lookup failed: ${_redact(e.toString())}');
+      throw RapidApiException('PNR lookup failed: ${_redact(e.toString())}');
     }
+  }
+
+  /// Masks anything that looks like a PNR (a bare 10-digit run).
+  ///
+  /// Deliberately keeps the last three digits so a support conversation can still
+  /// match a report to a request without the log holding the identifier.
+  static String _redact(String s) => s.replaceAllMapped(
+        RegExp(r'\b\d{10}\b'),
+        (m) => '*******${m[0]!.substring(7)}',
+      );
+
+  /// Logs the shape of a response without any of its values.
+  ///
+  /// Top-level key NAMES are safe and are what actually helps when a provider
+  /// renames a field — which is how several of this file's silent fallbacks went
+  /// unnoticed. Values are never logged.
+  void _logShape(String label, int status, String body) {
+    if (!kDebugMode) return;
+    String shape;
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map) {
+        final inner = decoded['data'];
+        final keys = (inner is Map ? inner.keys : decoded.keys)
+            .map((k) => k.toString())
+            .toList()
+          ..sort();
+        final rows = inner is Map
+            ? (inner['passengers'] ?? inner['passenger_list'])
+            : null;
+        shape = 'keys=${keys.join(",")}'
+            '${rows is List ? " passengerRows=${rows.length}" : ""}';
+      } else if (decoded is List) {
+        shape = 'topLevelList length=${decoded.length}';
+      } else {
+        shape = 'scalar';
+      }
+    } catch (_) {
+      shape = 'undecodable';
+    }
+    debugPrint('[RapidAPI] $label response: HTTP $status, '
+        '${body.length} bytes, $shape');
   }
 
   PnrResult? _parsePnrStatus(dynamic json, String pnr) {
@@ -366,20 +385,40 @@ class RapidApiService {
     final data = json['data'] ?? json;
     if (data is! Map<String, dynamic>) return null;
 
-    final trainNum = (data['train_number'] ??
-            data['trainNumber'] ??
-            data['train_no'] ??
-            '12951')
-        .toString();
-    final trainName =
-        (data['train_name'] ?? data['trainName'] ?? 'Rajdhani Express').toString();
-    final boardingCode = (data['boarding_station_code'] ??
-            data['boarding_code'] ??
-            data['from'] ??
-            'BCT')
-        .toString();
-    final destCode =
-        (data['destination_station_code'] ?? data['to'] ?? 'NDLS').toString();
+    final trainNum = _optional(data, const [
+          'train_number',
+          'trainNumber',
+          'train_no',
+        ]) ??
+        '';
+
+    // Key lists widened to match the RailKit mapper's. This path was checking
+    // only two or three aliases each, so a response that stated the boarding
+    // point under `boarding_point`, `from_stn_code` or `source` — all of which
+    // RailKit reads — fell through to the hardcoded 'BCT'. Same story for
+    // `reservation_upto` / `to_stn_code` / `destination` and 'NDLS'.
+    final boardingCode = _optional(data, const [
+      'boarding_point',
+      'boarding_station_code',
+      'boarding_code',
+      'from_stn_code',
+      'from',
+      'source',
+    ])?.toUpperCase();
+
+    final destCode = _optional(data, const [
+      'reservation_upto',
+      'destination_station_code',
+      'to_stn_code',
+      'to',
+      'destination',
+    ])?.toUpperCase();
+
+    // Derived from the real train number rather than naming a specific real
+    // train. This defaulted to 'Rajdhani Express', so any response missing a name
+    // was presented as a Rajdhani.
+    final trainName = _optional(data, const ['train_name', 'trainName']) ??
+        'Train $trainNum';
 
     final passengersList = data['passengers'] ?? data['passenger_list'];
     final passengers = <PnrPassenger>[];
@@ -401,49 +440,110 @@ class RapidApiService {
       }
     }
 
-    if (passengers.isEmpty) {
-      passengers.add(const PnrPassenger(
-        index: 1,
-        booking: SeatAllocation.confirmed('B1', '34', 'LB'),
-        current: SeatAllocation.confirmed('B1', '34', 'LB'),
-      ));
-    }
+    // No usable passenger rows means we cannot describe this booking. This used
+    // to inject a fabricated confirmed passenger on B1/34/LB, which is the exact
+    // failure mode pnr_service.dart calls trust-breaking a few lines from its own
+    // fallback. A null return surfaces "PNR not found" instead.
+    if (passengers.isEmpty) return null;
+
+    // Likewise the train itself: this defaulted to 12951 "Rajdhani Express",
+    // so an unparseable response produced a real train number that had nothing
+    // to do with the ticket.
+    if (!isValidIRTrainNumber(trainNum)) return null;
 
     return PnrResult(
       pnr: pnr,
       train: TrainSummary(
-        number: isValidIRTrainNumber(trainNum) ? trainNum : '12951',
+        number: trainNum,
         name: trainName,
-        fromCode: boardingCode,
-        fromName: boardingCode,
-        toCode: destCode,
-        toName: destCode,
-        departure: '17:00',
-        arrival: '08:35',
-        duration: '15h 35m',
-        daysLabel: 'Daily',
-        type: 'Express',
+        // An em dash when the response did not state it, matching what the
+        // RailKit mapper already does. Obviously-not-a-station-code beats a
+        // specific real station: this path used to claim every unstated journey
+        // ran BCT to NDLS.
+        //
+        // fromName/toName carry the CODE rather than a station name on both PNR
+        // paths. That is lossy rather than fabricated and is flagged separately —
+        // resolving a name needs StationRepository, which loads asynchronously
+        // and is not reachable from a pure mapper.
+        fromCode: boardingCode ?? '—',
+        fromName: boardingCode ?? '—',
+        toCode: destCode ?? '—',
+        toName: destCode ?? '—',
+        // Derived, not hardcoded. Every PNR-sourced train used to be typed
+        // 'Express', including a Rajdhani. This reuses the inference already in
+        // this class, and also reads the payload's own type field — which was a
+        // second available-but-unread value.
+        type: _inferTrainType(
+          trainName,
+          _optional(data, const ['train_type', 'type']) ?? '',
+        ),
+        // WERE '17:00' / '08:35' / '15h 35m' / 'Daily' — a specific, plausible,
+        // wrong timetable applied to every train that came through this path. A
+        // PNR response carries booking data, not the schedule, so these are
+        // genuinely unavailable here and are now simply absent.
       ),
-      journeyDate: DateTime.now().add(const Duration(days: 1)),
-      travelClass: (data['class'] ?? '3A').toString(),
-      boardingCode: boardingCode,
-      chartStatus: ChartStatus.prepared,
+      // Was `now + 1 day` without ever consulting the payload.
+      journeyDate: _journeyDateOf(data),
+      travelClass: _optional(data, const ['class', 'journey_class', 'travel_class']),
+      // Now READ rather than assumed. This was hardcoded to prepared, so the
+      // screen always claimed berths were final. The RailKit mapper reads the
+      // same field, which is what showed the value was obtainable all along —
+      // the same situation as the berth type two rounds ago.
+      chartStatus: _chartStatusOf(data),
       passengers: passengers,
     );
   }
 
-  SeatAllocation _parseSeatAllocation(String status) {
-    if (status.contains('CNF')) {
-      final parts = status.split('/');
-      final coach = parts.length > 1 ? parts[1] : 'B1';
-      final berth = parts.length > 2 ? parts[2] : '12';
-      return SeatAllocation.confirmed(coach, berth, 'MB');
+  /// First non-empty value among [keys], or null. No plausible default.
+  String? _optional(Map<String, dynamic> m, List<String> keys) {
+    for (final k in keys) {
+      final v = m[k]?.toString().trim();
+      if (v != null && v.isNotEmpty && v != '—') return v;
     }
-    if (status.contains('RAC')) {
-      return const SeatAllocation.rac(4);
-    }
-    return const SeatAllocation.waitlist(12);
+    return null;
   }
+
+  /// Reads the chart flag if the payload states it, else null.
+  ChartStatus? _chartStatusOf(Map<String, dynamic> data) {
+    final raw = _optional(data, const [
+      'chart_status',
+      'chartStatus',
+      'chart_prepared',
+    ])?.toLowerCase();
+    if (raw == null) return null;
+    if (raw.contains('not') || raw == 'false') return ChartStatus.notPrepared;
+    if (raw.contains('prepared') || raw == 'true') return ChartStatus.prepared;
+    return null;
+  }
+
+  /// Reads the date of journey if stated, else null.
+  DateTime? _journeyDateOf(Map<String, dynamic> data) {
+    final raw =
+        _optional(data, const ['journey_date', 'doj', 'date', 'travel_date']);
+    if (raw == null) return null;
+    final iso = DateTime.tryParse(raw);
+    if (iso != null) return iso;
+    // DD-MM-YYYY.
+    final parts = raw.split(RegExp(r'[-/]'));
+    if (parts.length == 3) {
+      final d = int.tryParse(parts[0]);
+      final mo = int.tryParse(parts[1]);
+      final y = int.tryParse(parts[2]);
+      if (d != null && mo != null && y != null) return DateTime(y, mo, d);
+    }
+    return null;
+  }
+
+  /// Delegates to [SeatAllocation.fromStatusString].
+  ///
+  /// FABRICATION REMOVED. This previously hardcoded the berth type to `MB` for
+  /// every confirmed passenger — the fourth segment of the status string, which
+  /// actually carries it, was parsed and discarded. It also substituted coach
+  /// `B1` and berth `12` when segments were missing, forced RAC to position 4 and
+  /// treated every non-CNF, non-RAC status as waitlist 12, so a cancelled ticket
+  /// came back as "WL 12".
+  SeatAllocation _parseSeatAllocation(String status) =>
+      SeatAllocation.fromStatusString(status);
 
   /// Fetches real live train status & platform info from RapidAPI.
   Future<LiveTrainStatusData?> getLiveTrainStatus(String trainNumber) async {
@@ -460,9 +560,7 @@ class RapidApiService {
     try {
       final response = await _client.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
 
-      debugPrint('==================== [RAPIDAPI LIVE STATUS RAW RESPONSE] ====================');
-      debugPrint('Status Code: ${response.statusCode}');
-      debugPrint('Body: ${response.body}');
+      _logShape('liveStatus', response.statusCode, response.body);
       debugPrint('=============================================================================');
 
       if (response.statusCode != 200) return null;
@@ -480,16 +578,19 @@ class RapidApiService {
       final platform = (rawPf != null && rawPf.isNotEmpty && rawPf != 'null' && rawPf != '0') ? rawPf : null;
       final statusText = (data['status'] ?? data['status_as_of'] ?? (delayMin > 0 ? 'Delayed ${delayMin}m' : 'On time')).toString();
 
+      final rawName = (data['train_name'] ?? data['train_name_full'] ?? data['name'])?.toString().trim();
+      final trainName = (rawName != null && rawName.isNotEmpty) ? rawName : 'Train $cleanNum';
+
       return LiveTrainStatusData(
         trainNumber: cleanNum,
-        trainName: (data['train_name'] ?? '').toString(),
+        trainName: trainName,
         currentStation: currentStation,
         delayMinutes: delayMin,
         platform: platform,
         statusText: statusText,
       );
     } catch (e) {
-      debugPrint('[RapidAPI Live Status Error] $e');
+      if (kDebugMode) debugPrint('[RapidAPI Live Status Error] $e');
       return null;
     }
   }

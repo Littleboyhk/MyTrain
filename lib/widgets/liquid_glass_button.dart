@@ -1,9 +1,10 @@
-import 'dart:ui' show ImageFilter, ColorFilter, FrameTiming;
+import 'dart:ui' show ImageFilter, ColorFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/glass_quality.dart';
 
 /// ---------------------------------------------------------------------------
 /// Liquid Glass — a reusable button component replicating Apple's iOS 26
@@ -23,45 +24,12 @@ import '../theme/app_colors.dart';
 /// Android), falling back to a more opaque translucent fill that still reads as
 /// glass. Blur is only used on small/standalone surfaces — never stacked over
 /// large areas.
+///
+/// [GlassQuality] and the blur dial now live in `theme/glass_quality.dart` so
+/// that `GlassSurface` and `AuroraBackground` can consult them too — a core
+/// surface should not have to import a button file to find the performance
+/// switch.
 /// ---------------------------------------------------------------------------
-
-/// Global blur-quality switch. Monitors frame timings and flips [blurEnabled]
-/// off if the app is dropping frames, so glass degrades gracefully.
-class GlassQuality {
-  GlassQuality._();
-  static final GlassQuality instance = GlassQuality._();
-
-  /// Widgets listen to this to decide whether to run a [BackdropFilter].
-  final ValueNotifier<bool> blurEnabled = ValueNotifier<bool>(true);
-
-  bool _monitoring = false;
-  int _slowFrames = 0;
-
-  /// Manually force blur off (e.g. a user "reduce effects" setting).
-  void setBlurEnabled(bool value) => blurEnabled.value = value;
-
-  void ensureMonitoring() {
-    if (_monitoring) return;
-    _monitoring = true;
-    WidgetsBinding.instance.addTimingsCallback(_onTimings);
-  }
-
-  void _onTimings(List<FrameTiming> timings) {
-    for (final t in timings) {
-      // A 60fps frame budget is ~16.7ms; treat >24ms as a dropped frame.
-      final ms = t.totalSpan.inMicroseconds / 1000.0;
-      if (ms > 24) {
-        _slowFrames++;
-      } else if (_slowFrames > 0) {
-        _slowFrames--;
-      }
-    }
-    // Sustained jank → drop blur once (never auto-re-enable to avoid flapping).
-    if (blurEnabled.value && _slowFrames > 12) {
-      blurEnabled.value = false;
-    }
-  }
-}
 
 /// Blur + saturation/brightness boost = the iOS "vibrancy" look.
 ImageFilter _glassBlur(double sigma) {
@@ -89,6 +57,7 @@ class _LiquidGlassPanel extends StatelessWidget {
     required this.blurSigma,
     required this.child,
     this.tint,
+    this.gradient,
     this.tintStrength = 0.82,
     this.shadows,
     this.overlay,
@@ -99,6 +68,7 @@ class _LiquidGlassPanel extends StatelessWidget {
 
   /// null → neutral (near-clear) glass; else a colored glass.
   final Color? tint;
+  final Gradient? gradient;
   final double tintStrength;
   final List<BoxShadow>? shadows;
 
@@ -155,6 +125,11 @@ class _LiquidGlassPanel extends StatelessWidget {
   }
 
   Widget _fill(bool useBlur) {
+    if (gradient != null) {
+      return DecoratedBox(
+        decoration: BoxDecoration(gradient: gradient),
+      );
+    }
     if (tint == null) {
       // Near-clear over blur; a more opaque surface when blur is unavailable
       // so content stays legible.
@@ -245,6 +220,7 @@ class LiquidGlassButton extends StatefulWidget {
     required Widget this.child,
     this.onPressed,
     this.tint,
+    this.gradient,
     this.glowColor,
     this.blurSigma = 18,
     this.cornerRadius = 24,
@@ -282,6 +258,7 @@ class LiquidGlassButton extends StatefulWidget {
     this.semanticLabel,
   })  : _variant = _Variant.icon,
         child = null,
+        gradient = null,
         cornerRadius = 0,
         padding = EdgeInsets.zero,
         expand = false,
@@ -290,6 +267,7 @@ class LiquidGlassButton extends StatefulWidget {
   final _Variant _variant;
   final VoidCallback? onPressed;
   final Color? tint;
+  final Gradient? gradient;
   final Color? glowColor;
   final double blurSigma;
   final bool enabled;
@@ -414,12 +392,17 @@ class _LiquidGlassButtonState extends State<LiquidGlassButton>
           )
         : Padding(padding: widget.padding, child: widget.child);
 
+    final ShapeBorder shape = widget.cornerRadius >= 999
+        ? const StadiumBorder()
+        : ContinuousRectangleBorder(
+            borderRadius: BorderRadius.circular(widget.cornerRadius),
+          );
+
     return _LiquidGlassPanel(
-      shape: ContinuousRectangleBorder(
-        borderRadius: BorderRadius.circular(widget.cornerRadius),
-      ),
+      shape: shape,
       blurSigma: widget.blurSigma,
       tint: tint,
+      gradient: widget.gradient,
       tintStrength: 0.86,
       shadows: AppColors.floatingShadow(
         blur: 26,

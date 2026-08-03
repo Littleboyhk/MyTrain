@@ -2,6 +2,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
+import '../theme/glass_quality.dart';
 import '../theme/glass_theme.dart';
 import 'glass.dart';
 
@@ -65,9 +66,40 @@ class GlassSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Start the frame-timing watch from the first glass surface built, rather
+    // than only when a LiquidGlassButton happens to appear. Idempotent.
+    GlassQuality.instance.ensureMonitoring();
+
+    // Rebuilds only when the switch flips (once, at most, per run), so the
+    // listener costs nothing per frame.
+    return ValueListenableBuilder<bool>(
+      valueListenable: GlassQuality.instance.blurEnabled,
+      builder: (context, blurAllowed, _) => _build(context, blurAllowed),
+    );
+  }
+
+  Widget _build(BuildContext context, bool blurAllowed) {
     final g = context.glass;
     final dark = g.isDark;
     final r = BorderRadius.circular(pill ? 999 : radius);
+
+    // The single point where blur cost is decided for every surface in the app:
+    // the design-time dial, then the run-time switch.
+    final double sigma = blurAllowed ? GlassBlur.sigma(blur) : 0;
+    final bool blurring = sigma > 0;
+
+    // Two different reasons a surface ends up with no blur, and they need
+    // different fills:
+    //
+    //  * `blur: 0` at the call site — a deliberately flat nested well inside an
+    //    already-opaque parent. Wants to stay light and translucent.
+    //  * blur requested but denied by GlassQuality — a top-level pane (nav dock,
+    //    modal sheet) that has lost the only thing making its backdrop
+    //    unreadable. Its fill has to compensate, or content behind it shows
+    //    through legibly.
+    //
+    // Conflating the two is what left degraded mode looking like a tinted film.
+    final bool compensating = blur > 0 && !blurring;
 
     Widget content = child;
     if (padding != null) {
@@ -82,8 +114,13 @@ class GlassSurface extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: fillColor,
-          gradient:
-              fillColor == null ? glassFillGradient(dark, strong: strong) : null,
+          gradient: fillColor == null
+              ? glassFillGradient(
+                  dark,
+                  strong: strong || !blurring,
+                  blurless: compensating,
+                )
+              : null,
           borderRadius: r,
         ),
         child: content,
@@ -92,8 +129,8 @@ class GlassSurface extends StatelessWidget {
 
     final Widget clipped = ClipRRect(
       borderRadius: r,
-      child: blur > 0
-          ? BackdropFilter(filter: glassFilter(blur, dark), child: inner)
+      child: blurring
+          ? BackdropFilter(filter: glassFilter(sigma, dark), child: inner)
           : inner,
     );
 

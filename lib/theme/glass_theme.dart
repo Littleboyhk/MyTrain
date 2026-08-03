@@ -29,6 +29,11 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
     required this.statusGreen,
     required this.statusRed,
     required this.statusPurple,
+    required this.railRail,
+    required this.railBar,
+    required this.railDot,
+    required this.railTie,
+    required this.railTieIdle,
   });
 
   final Brightness brightness;
@@ -72,12 +77,56 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
   final Color statusRed;
   final Color statusPurple;
 
+  // ---------------------------------------------------------------------------
+  // Rail-track timeline (lib/widgets/rail_track/)
+  // ---------------------------------------------------------------------------
+
+  /// The two running rails. A neutral steel, bright enough to hold its own
+  /// against the ties rather than disappearing behind them.
+  final Color railRail;
+
+  /// The solid track bar running down the timeline gutter.
+  ///
+  /// A muted steel-blue, ONE flat colour for the whole route. Progress is
+  /// deliberately not encoded here — the dual scheduled/actual time columns
+  /// either side of each row carry it, and two systems competing to express the
+  /// same thing is why the earlier amber ladder never read clearly.
+  ///
+  /// (This token was briefly marked superseded while the bar was removed in
+  /// favour of floating dots. The bar is back — design.md section 2 has the full
+  /// sequence.)
+  final Color railBar;
+
+  /// Station dots on the bar. Lighter than [railBar] in dark mode so they read
+  /// as markers sitting on it rather than holes punched through it, and darker
+  /// than it in light mode where a pale dot would vanish.
+  final Color railDot;
+
+  /// Ties on track the train has already covered — the amber ladder.
+  ///
+  /// SUPERSEDED. Kept because the loading skeleton still paints a tie pattern.
+  /// See design.md section 2 for why the ladder was replaced.
+  final Color railTie;
+
+  /// Ties on track still ahead. Neutral on purpose: amber *means* travelled, so
+  /// using it ahead of the train would destroy the progress reading that
+  /// Requirement 1.3 depends on.
+  final Color railTieIdle;
+
   bool get isDark => brightness == Brightness.dark;
 
   // Brand accent — violet -> indigo.
   static const Color accentViolet = Color(0xFF8B5CF6);
   static const Color accentIndigo = Color(0xFF6366F1);
   static const Color accentBlue = Color(0xFF3B82F6);
+
+  /// Brand amber for the track ladder, and the source of its glow.
+  ///
+  /// Hue ≈ 42°. `AppColors.delayed` is `#FF3B30`, hue ≈ 3°, so there is ~39° of
+  /// separation — enough that a delay badge never reads as a piece of track.
+  /// The two are also spatially separated: amber appears only inside the 44px
+  /// gutter, red only in the content column beside it.
+  static const Color railAmber = Color(0xFFFFB300);
   static const LinearGradient accent = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
@@ -111,6 +160,14 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
     statusGreen: Color(0xFF34C759),
     statusRed: Color(0xFFFF3B30),
     statusPurple: Color(0xFFAF52DE),
+    // Bright steel + brand amber: this theme sits on true black, so both can
+    // run near full strength without glare.
+    railRail: Color(0xFFB6BECD),
+    // Muted steel-blue bar with lighter dots sitting on it.
+    railBar: Color(0xFF255C7E),
+    railDot: Color(0xFFA8CBEA),
+    railTie: railAmber,
+    railTieIdle: Color(0xFF7C8698),
   );
 
   // ---------------------------------------------------------------------------
@@ -137,6 +194,18 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
     statusGreen: Color(0xFF16A34A),
     statusRed: Color(0xFFDC2626),
     statusPurple: Color(0xFF9333EA),
+    // Much darker than the dark theme's equivalents. These are composited at
+    // 0.55–1.0 alpha over a #F1F3F8 surface, and anything lighter lands under
+    // the 3:1 WCAG floor for non-text graphics — #FFB300 itself measures only
+    // 2.2:1 there. Verified in rail_track_painter_test.dart.
+    railRail: Color(0xFF2C3340),
+    // Deeper on light so the bar holds against a near-white surface, with the
+    // dots darker than the bar rather than lighter — inverted from dark theme,
+    // because a pale dot would vanish here.
+    railBar: Color(0xFF2F6E92),
+    railDot: Color(0xFF12405C),
+    railTie: Color(0xFF9E5A00),
+    railTieIdle: Color(0xFF3D4655),
   );
 
   double _ld(double a, double b, double t) => a + (b - a) * t;
@@ -167,6 +236,11 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
     Color? statusGreen,
     Color? statusRed,
     Color? statusPurple,
+    Color? railRail,
+    Color? railBar,
+    Color? railDot,
+    Color? railTie,
+    Color? railTieIdle,
   }) {
     return GlassTheme(
       brightness: brightness ?? this.brightness,
@@ -189,6 +263,11 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
       statusGreen: statusGreen ?? this.statusGreen,
       statusRed: statusRed ?? this.statusRed,
       statusPurple: statusPurple ?? this.statusPurple,
+      railRail: railRail ?? this.railRail,
+      railBar: railBar ?? this.railBar,
+      railDot: railDot ?? this.railDot,
+      railTie: railTie ?? this.railTie,
+      railTieIdle: railTieIdle ?? this.railTieIdle,
     );
   }
 
@@ -216,6 +295,11 @@ class GlassTheme extends ThemeExtension<GlassTheme> {
       statusGreen: Color.lerp(statusGreen, other.statusGreen, t)!,
       statusRed: Color.lerp(statusRed, other.statusRed, t)!,
       statusPurple: Color.lerp(statusPurple, other.statusPurple, t)!,
+      railRail: Color.lerp(railRail, other.railRail, t)!,
+      railBar: Color.lerp(railBar, other.railBar, t)!,
+      railDot: Color.lerp(railDot, other.railDot, t)!,
+      railTie: Color.lerp(railTie, other.railTie, t)!,
+      railTieIdle: Color.lerp(railTieIdle, other.railTieIdle, t)!,
     );
   }
 }
