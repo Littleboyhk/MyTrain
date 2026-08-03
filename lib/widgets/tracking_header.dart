@@ -48,8 +48,8 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   // 56 not 58: the sliver can hand back a fraction less than minExtent while
   // pinning, and a fixed 58 overflowed the Column by 1px on web.
   static const double _compactBar = 56;
-  // 130: icon row (42) + gap (8) + date pills (66) = 116, leaving 14px bottom slack.
-  static const double _extras = 130;
+  // 116: icon row (42) + gap (8) + date pills (58) = 108, leaving 8px bottom slack.
+  static const double _extras = 116;
 
   @override
   double get minExtent => topPadding + _compactBar;

@@ -34,7 +34,7 @@ class DatePillSelector extends StatefulWidget {
   // scale reached ~1.15 — the tall Noto fallback metrics made it worse), plus a
   // reserved slot for the "today" dot marker. Verified by measurement across
   // scale 1.0/1.15/1.3/2.0.
-  static const double pillHeight = 52;
+  static const double pillHeight = 48;
   static const double gap = 10;
 
   /// Compact glanceable chips: their text is capped so a very large system font
@@ -93,15 +93,16 @@ class _DatePillSelectorState extends State<DatePillSelector> {
     return MediaQuery(
       data: mq.copyWith(textScaler: clamped),
       child: SizedBox(
-      height: DatePillSelector.pillHeight + 14,
+      height: DatePillSelector.pillHeight + 10,
       child: SingleChildScrollView(
         controller: _scroll,
         scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: SizedBox(
           width: totalWidth,
-          height: DatePillSelector.pillHeight + 14,
+          height: DatePillSelector.pillHeight + 10,
           child: Stack(
             children: [
               // Sliding active background.
@@ -199,14 +200,13 @@ class _Pill extends StatelessWidget {
           width: DatePillSelector.pillWidth,
           height: DatePillSelector.pillHeight,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 7),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
                   height: 1.0,
@@ -214,12 +214,12 @@ class _Pill extends StatelessWidget {
                 ),
                 child: Text(topLabel, maxLines: 1),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 1),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 9.5,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
                   height: 1.0,
@@ -229,28 +229,23 @@ class _Pill extends StatelessWidget {
                 ),
                 child: Text(bottomLabel, maxLines: 1),
               ),
-              const SizedBox(height: 3),
-              SizedBox(
-                height: 10,
-                child: isToday
-                    ? Center(
-                        child: Text(
-                          'TODAY',
-                          key: const Key('today_marker'),
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 7.5,
-                            height: 1.0,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: selected
-                                ? Colors.white
-                                : GlassTheme.accentViolet,
-                          ),
-                        ),
-                      )
-                    : null,
-              ),
+              if (isToday) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'TODAY',
+                  key: const Key('today_marker'),
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 7.5,
+                    height: 1.0,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                    color: selected
+                        ? Colors.white
+                        : GlassTheme.accentViolet,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -280,9 +275,8 @@ class _CalendarPill extends StatelessWidget {
           width: DatePillSelector.pillWidth,
           height: DatePillSelector.pillHeight,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 9),
               Icon(
                 Icons.calendar_month_rounded,
                 size: 16,
@@ -293,7 +287,7 @@ class _CalendarPill extends StatelessWidget {
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 9.5,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.1,
                   height: 1.0,
