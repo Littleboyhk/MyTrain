@@ -199,58 +199,52 @@ class _Pill extends StatelessWidget {
           width: DatePillSelector.pillWidth,
           height: DatePillSelector.pillHeight,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 5),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
-                  height: 1.0,
+                  height: 1.1,
                   color: selected ? Colors.white : g.textPrimary,
                 ),
                 child: Text(topLabel, maxLines: 1),
               ),
-              const SizedBox(height: 1),
+              const SizedBox(height: 2),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.2,
-                  height: 1.0,
+                  height: 1.1,
                   color: selected
                       ? Colors.white.withValues(alpha: 0.90)
                       : g.textSecondary,
                 ),
                 child: Text(bottomLabel, maxLines: 1),
               ),
-              const SizedBox(height: 2),
-              SizedBox(
-                height: 10,
-                child: isToday
-                    ? Center(
-                        child: Text(
-                          'TODAY',
-                          key: const Key('today_marker'),
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 8,
-                            height: 1.0,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: selected
-                                ? Colors.white
-                                : GlassTheme.accentViolet,
-                          ),
-                        ),
-                      )
-                    : null,
-              ),
+              if (isToday) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'TODAY',
+                  key: const Key('today_marker'),
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 8,
+                    height: 1.0,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                    color: selected
+                        ? Colors.white
+                        : GlassTheme.accentViolet,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -280,31 +274,28 @@ class _CalendarPill extends StatelessWidget {
           width: DatePillSelector.pillWidth,
           height: DatePillSelector.pillHeight,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 7),
               Icon(
                 Icons.calendar_month_rounded,
                 size: 16,
                 color: selected ? Colors.white : g.textPrimary,
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               AnimatedDefaultTextStyle(
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.1,
-                  height: 1.0,
+                  height: 1.1,
                   color: selected
                       ? Colors.white.withValues(alpha: 0.92)
                       : g.textPrimary,
                 ),
                 child: const Text('Calendar', maxLines: 1),
               ),
-              const SizedBox(height: 2),
-              const SizedBox(height: 10),
             ],
           ),
         ),
