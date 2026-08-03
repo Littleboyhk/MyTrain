@@ -108,13 +108,13 @@ class _DatePillSelectorState extends State<DatePillSelector> {
                 duration: Motion.pillSlide,
                 curve: Motion.emphasized,
                 left: widget.selectedIndex * _stride,
-                top: 0,
+                top: 4,
                 width: DatePillSelector.pillWidth,
-                height: DatePillSelector.pillHeight,
+                height: DatePillSelector.pillHeight - 8,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: GlassTheme.accent,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
                         color: GlassTheme.accentIndigo.withValues(alpha: 0.35),
