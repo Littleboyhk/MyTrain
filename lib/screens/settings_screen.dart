@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../data/app_settings_controller.dart';
 import '../data/chat_gate_controller.dart';
@@ -78,8 +77,6 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                _fontCard(context, ref, settings),
                 const SizedBox(height: 28),
                 _sectionLabel(context, L10n.of(context).sectionPersonal),
                 const SizedBox(height: 12),
@@ -589,137 +586,7 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Font
-  // ---------------------------------------------------------------------------
 
-  /// Whole-app typeface picker. Mirrors the alarm-tone row: a tap opens a
-  /// bottom-sheet radio list, and the choice is persisted + applied app-wide via
-  /// `appFont` → `AppTheme.themeFor` (see `main.dart`).
-  Widget _fontCard(BuildContext context, WidgetRef ref, AppSettings settings) {
-    final g = context.glass;
-    return GlassContainer(
-      radius: 22,
-      blurSigma: 20,
-      strong: true,
-      padding: const EdgeInsets.all(6),
-      child: _accountRow(
-        context,
-        icon: Icons.text_fields_rounded,
-        // TODO(l10n): needs an .arb key like the rest of Appearance; English
-        // literal for now, matching the account section's existing TODO.
-        title: 'Font',
-        subtitle: settings.appFont.label,
-        trailing:
-            Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
-        onTap: () async {
-          Haptics.tap();
-          final picked = await _pickFont(context, settings.appFont);
-          if (picked == null || !context.mounted) return;
-          ref.read(appSettingsProvider.notifier).setAppFont(picked);
-          _toast(context, 'Font set to ${picked.label}');
-        },
-      ),
-    );
-  }
-
-  Future<AppFont?> _pickFont(BuildContext context, AppFont current) {
-    final g = context.glass;
-    return showModalBottomSheet<AppFont>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.45),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 12,
-          right: 12,
-          bottom: 12 + MediaQuery.of(ctx).viewPadding.bottom,
-        ),
-        child: GlassContainer(
-          radius: 28,
-          blurSigma: 24,
-          strong: true,
-          glow: true,
-          padding: const EdgeInsets.fromLTRB(18, 18, 12, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Font',
-                style: AppText.titleStrong
-                    .copyWith(color: g.textPrimary, fontSize: 19),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Changes the typeface across the whole app. Each name previews '
-                'in its own font.',
-                style: AppText.label
-                    .copyWith(color: g.textMuted, fontSize: 12.5, height: 1.4),
-              ),
-              const SizedBox(height: 10),
-              for (final font in AppFont.values)
-                Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () {
-                      Haptics.selection();
-                      Navigator.of(ctx).pop(font);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 13),
-                      child: Row(
-                        children: [
-                          Icon(
-                            font == current
-                                ? Icons.radio_button_checked_rounded
-                                : Icons.radio_button_unchecked_rounded,
-                            size: 20,
-                            color: font == current
-                                ? GlassTheme.accentViolet
-                                : g.textMuted,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              font.label,
-                              style: _previewStyle(font).copyWith(
-                                color: g.textPrimary,
-                                fontSize: 15.5,
-                                fontWeight: font == current
-                                    ? FontWeight.w700
-                                    : FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            'Aa 123',
-                            style: _previewStyle(font).copyWith(
-                              color: g.textMuted,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// A [TextStyle] in [font]'s own face, for the picker preview. `getFont` also
-  /// warms the family so the choice applies the moment it is selected.
-  TextStyle _previewStyle(AppFont font) {
-    final family = font.googleFamily;
-    if (family == null) return const TextStyle();
-    return GoogleFonts.getFont(family);
-  }
 
   // ---------------------------------------------------------------------------
   // Shared rows
