@@ -237,13 +237,13 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
     // see CellObservationRecorder for why it cannot slow tracking down.
     ref.watch(cellObservationProvider(_trainKey));
     final verified = ref.watch(crowdVerifiedPositionProvider(_trainKey)).value;
-    // Provenance, most specific first. A position the device map-matched itself
-    // is a measurement and says so, rather than hiding behind "Estimated".
     _sourceLabel = (state is TrackingReady && state.isOfflinePosition)
         ? 'Offline · GPS'
         : (verified != null && verified.isFresh)
             ? 'Crowd-verified'
-            : 'Estimated';
+            : (state is TrackingReady && state.live)
+                ? 'Real-Time API'
+                : 'Timetable Schedule';
 
     ref.listen<CrowdSharingState>(crowdSharingProvider, (prev, next) {
       final reason = next.autoOffReason;
@@ -277,7 +277,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
               ),
               slivers: [
                 SliverPersistentHeader(
-                  pinned: true,
+                  pinned: false,
                   delegate: _headerDelegate(state, controller, topPadding),
                 ),
                 ..._bodySlivers(state, controller, bottomInset),
@@ -362,8 +362,8 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       trainName: train?.name ?? journey?.trainName ?? 'Fetching live status…',
       originName: train?.fromName ?? journey?.origin.name ?? '',
       destinationName: train?.toName ?? journey?.destination.name ?? '',
-      // LIVE only when a real running-status fix exists; otherwise OFFLINE.
-      live: state is TrackingReady && state.live,
+      // LIVE badge active whenever tracking state is ready.
+      live: state is TrackingReady,
       days: _days,
       selectedDay: _selectedDay,
       onSelectDay: (i) => setState(() => _selectedDay = i),
@@ -496,17 +496,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           SliverToBoxAdapter(
             child: JourneyHeroCard(state: state, sourceLabel: _sourceLabel),
           ),
-          // Anything the user can act on about offline tracking. Deliberately
-          // between the hero card and the timeline: the distance and ETA above
-          // it stay visible, so an explainer never costs the information the
-          // screen exists to show.
           SliverToBoxAdapter(child: _OfflineNotice(trainKey: _trainKey)),
-          SliverToBoxAdapter(
-            child: NextMileTransitCard(
-              destinationStationName: state.journey.destination.name,
-              destinationStationCode: state.journey.destination.code,
-            ),
-          ),
           SliverToBoxAdapter(child: _sectionLabel(state)),
           SliverPadding(
             padding: const EdgeInsets.only(left: 10, right: 6),
@@ -514,6 +504,12 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
               state: state,
               scrollController: _scrollController,
               trainOffsetNotifier: _trainOffset,
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: NextMileTransitCard(
+              destinationStationName: state.journey.destination.name,
+              destinationStationCode: state.journey.destination.code,
             ),
           ),
           SliverToBoxAdapter(

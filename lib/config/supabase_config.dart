@@ -27,6 +27,10 @@ class SupabaseConfig {
   static const String _anonKeyDefine =
       String.fromEnvironment("SUPABASE_ANON_KEY", defaultValue: "");
 
+  static const String _defaultUrl = "https://mokxoomaujfuhusxbojx.supabase.co";
+  static const String _defaultAnonKey =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1va3hvb21hdWpmdWh1c3hib2p4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NTE5MzEsImV4cCI6MjEwMDAyNzkzMX0.qaKsihNfiHeRq95mGGxV5wjMAOjG3sYcz417L-YATA8";
+
   /// Reads from .env without throwing when dotenv hasn't loaded (e.g. tests).
   static String _fromEnvFile(String key) {
     try {
@@ -36,12 +40,17 @@ class SupabaseConfig {
     }
   }
 
-  static String get url =>
-      _urlDefine.isNotEmpty ? _urlDefine : _fromEnvFile('SUPABASE_URL');
+  static String get url {
+    if (_urlDefine.isNotEmpty) return _urlDefine;
+    final envVal = _fromEnvFile('SUPABASE_URL');
+    return envVal.isNotEmpty ? envVal : _defaultUrl;
+  }
 
-  static String get anonKey => _anonKeyDefine.isNotEmpty
-      ? _anonKeyDefine
-      : _fromEnvFile('SUPABASE_ANON_KEY');
+  static String get anonKey {
+    if (_anonKeyDefine.isNotEmpty) return _anonKeyDefine;
+    final envVal = _fromEnvFile('SUPABASE_ANON_KEY');
+    return envVal.isNotEmpty ? envVal : _defaultAnonKey;
+  }
 
   /// When false, the app runs entirely offline (no backend calls).
   static bool get isConfigured => url.isNotEmpty && anonKey.isNotEmpty;

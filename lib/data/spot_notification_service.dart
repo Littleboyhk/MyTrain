@@ -47,6 +47,18 @@ class SpotNotificationService {
     debugPrint('[SpotNotification] Triggered notification: $title | $body');
   }
 
+  /// Deliver a notification when a PNR ticket status upgrades (e.g. WL -> CNF or RAC).
+  Future<void> showPnrUpgradeNotification({
+    required String pnr,
+    required String trainName,
+    required String passengerName,
+    required String newStatus,
+  }) async {
+    final title = '🎉 PNR Status Upgrade! ($pnr)';
+    final body = '$passengerName status upgraded to $newStatus on $trainName!';
+    debugPrint('[SpotNotification] Triggered PNR upgrade notification: $title | $body');
+  }
+
   /// Clear any active spot notification when train tracking stops.
   Future<void> cancelSpotNotification() async {
     debugPrint('[SpotNotification] Cancelled spot notification.');

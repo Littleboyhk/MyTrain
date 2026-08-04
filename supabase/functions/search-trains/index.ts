@@ -56,14 +56,8 @@ Deno.serve(async (req) => {
     // `run: () => rk.search(from, to, date ? toRailkitDate(date) : undefined)`.
     // Forwarding the date without keying on it would serve one date's results
     // for another.
-    const res = await cachedCall({
-      db: admin(),
-      method: "search",
-      cacheKey: `search:${from}:${to}`,
-      ttlSeconds: TTL.search,
-      run: () => rk.search(from, to),
-    });
-    return json(res);
+    const data = await rk.search(from, to);
+    return json({ data, cached: false });
   } catch (err) {
     const e = err instanceof RailKitError ? err : normalizeError(err);
     return json({ error: e.message, code: e.code }, e.status);

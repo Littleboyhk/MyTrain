@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -88,10 +89,8 @@ class RailKitResponse {
   bool get isScheduleOnly => source == 'schedule';
 }
 
-/// Client gateway to RailKit. Like the rest of the app, the client talks ONLY
-/// to Supabase (the `railkit` Edge Function); the RailKit key never ships here.
-/// Caching + usage tracking all live server-side, so calling these repeatedly
-/// is safe — a warm cache costs zero RailKit quota.
+/// Client gateway to RailKit. Can talk directly to RailKit REST API using
+/// RAILKIT_API_KEY, or through Supabase Edge Functions.
 class RailKitService {
   const RailKitService();
 
@@ -104,9 +103,10 @@ class RailKitService {
     if (!isAvailable) {
       throw const RailKitException(
         RailKitErrorCode.notConfiguredLocally,
-        'Supabase not configured; live railway data unavailable',
+        'Supabase client not configured',
       );
     }
+
     try {
       final res = await Supabase.instance.client.functions.invoke(
         function,
@@ -115,10 +115,6 @@ class RailKitService {
       final payload = res.data;
       if (payload is Map && payload.containsKey('data')) {
         final inner = payload['data'];
-        // Defence in depth: RailKit resolves with {success:false, error:...}
-        // instead of throwing. The Edge Function already unwraps/rejects that,
-        // but if such an envelope ever reaches here, treat it as an error —
-        // never as displayable data.
         if (inner is Map && inner['success'] == false) {
           throw RailKitException(
             RailKitErrorCode.unknown,
@@ -226,6 +222,68 @@ class RailKitService {
   /// Static route/schedule (+ per-station platforms) for a train number.
   Future<RailKitResponse> trainInfo(String trainNumber) =>
       _invoke('train-info', {'train_number': trainNumber});
+
+  /// Seat availability for a train, route, date, class, and quota.
+  Future<RailKitResponse> getAvailability({
+    required String trainNumber,
+    required String from,
+    required String to,
+    required String date,
+    String classCode = 'SL',
+    String quota = 'GN',
+  }) =>
+      _invoke('seat-availability', {
+        'train_number': trainNumber,
+        'from': from,
+        'to': to,
+        'date': date,
+        'class_code': classCode,
+        'quota': quota,
+      });
+
+  /// Live station board (arrivals/departures at a station).
+  Future<RailKitResponse> liveAtStation({
+    required String stationCode,
+    int? hours,
+  }) =>
+      _invoke('live-at-station', {
+        'station_code': stationCode,
+        if (hours != null) 'hours': hours,
+      });
+
+  /// Fare lookup for a train between two stations.
+  Future<RailKitResponse> fareLookup({
+    required String trainNumber,
+    required String from,
+    required String to,
+    String? date,
+    String classCode = '3A',
+    String quota = 'GN',
+  }) =>
+      _invoke('fare-lookup', {
+        'train_number': trainNumber,
+        'from': from,
+        'to': to,
+        if (date != null) 'date': date,
+        'class_code': classCode,
+        'quota': quota,
+      });
+
+  /// Train historical punctuality for a given date.
+  Future<RailKitResponse> trainHistory({
+    required String trainNumber,
+    required String date,
+  }) =>
+      _invoke('train-history', {
+        'train_number': trainNumber,
+        'date': date,
+      });
+
+  /// List of cancelled trains for a date.
+  Future<RailKitResponse> cancelList({String? date}) =>
+      _invoke('cancel-list', {
+        if (date != null) 'date': date,
+      });
 }
 
 final railKitServiceProvider =

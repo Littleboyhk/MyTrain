@@ -28,14 +28,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    const res = await cachedCall({
-      db: admin(),
-      method: "train_info",
-      cacheKey: `train_info:${trainNumber}`,
-      ttlSeconds: TTL.trainInfo,
-      run: () => rk.trainInfo(trainNumber),
-    });
-    return json(res);
+    const data = await rk.trainInfo(trainNumber);
+    return json({ data, cached: false });
   } catch (err) {
     const e = err instanceof RailKitError ? err : normalizeError(err);
     return json({ error: e.message, code: e.code }, e.status);

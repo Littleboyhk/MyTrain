@@ -24,12 +24,19 @@ import '../widgets/language_picker_sheet.dart';
 import '../widgets/liquid_glass_button.dart';
 import '../widgets/mesh_background.dart';
 import '../widgets/nearby_stations_sheet.dart';
+import '../widgets/route_mini_visual.dart';
+import '../widgets/static_route_map_visual.dart';
 import '../widgets/train_number_tag.dart';
 import 'live_tracking_screen.dart';
 import 'pnr_status_screen.dart';
 import 'settings_screen.dart';
 import 'station_picker_screen.dart';
 import 'train_results_screen.dart';
+import 'station_board_screen.dart';
+import 'seat_availability_screen.dart';
+import 'fare_lookup_screen.dart';
+import 'train_history_screen.dart';
+import 'cancelled_trains_screen.dart';
 
 /// Which way the user is searching on the Track tab.
 enum _SearchMode { route, number }
@@ -467,7 +474,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 child: switch (_navIndex) {
                   0 => _trackTab(g),
                   1 => const PnrStatusScreen(embedded: true),
-                  2 => _bookTab(g),
                   _ => const SettingsScreen(embedded: true),
                 },
               ),
@@ -510,19 +516,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   _hero(g),
                   const SizedBox(height: 20),
                   _buildSearch(g),
-                  if (_mode != _SearchMode.number || _numberQuery.trim().isEmpty) ...[
-                    const SizedBox(height: _kSearchGap),
-                    _chipRow(_row1Labels(L10n.of(context)), isRow1: true),
-                    const SizedBox(height: 10),
-                    _chipRow(
-                      [
-                        for (final k in _row2Keys)
-                          _row2Label(L10n.of(context), k),
-                      ],
-                      isRow1: false,
-                      keys: _row2Keys,
-                    ),
-                  ],
                   if (searched && trains.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     _listHeader(g, trains.length),
@@ -620,137 +613,134 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // -------- Book tab --------
+  // -------- Services / RailKit Hub tab --------
   Widget _bookTab(GlassTheme g) {
+    final services = [
+      (
+        'Seat Availability',
+        'Check seat availability by class & quota',
+        Icons.event_seat_rounded,
+        AppColors.accent,
+        () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SeatAvailabilityScreen()),
+            ),
+      ),
+      (
+        'Live Station Board',
+        'Real-time arrivals & departures at any station',
+        Icons.developer_board_rounded,
+        Colors.amber,
+        () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const StationBoardScreen()),
+            ),
+      ),
+      (
+        'Fare Lookup',
+        'Breakdown of base & total fare by class',
+        Icons.payments_rounded,
+        Colors.teal,
+        () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const FareLookupScreen()),
+            ),
+      ),
+      (
+        'Run History',
+        'Historical train punctuality & delay logs',
+        Icons.history_rounded,
+        Colors.lightBlue,
+        () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TrainHistoryScreen()),
+            ),
+      ),
+      (
+        'Cancelled Trains',
+        'Today\'s fully and partially cancelled trains',
+        Icons.block_rounded,
+        AppColors.delayed,
+        () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CancelledTrainsScreen()),
+            ),
+      ),
+    ];
+
     return SafeArea(
       bottom: false,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(28, 0, 28, 120),
-          child: GlassSurface(
-            radius: 28,
-            blur: 24,
-            glow: true,
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: GlassTheme.accentViolet.withValues(alpha: 0.20),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: GlassTheme.accentViolet.withValues(alpha: 0.40),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '🚀',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'COMING SOON',
-                        style: TextStyle(
-                          color: GlassTheme.accentViolet,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Container(
-                  width: 70,
-                  height: 70,
-                  decoration: BoxDecoration(
-                    gradient: GlassTheme.accent,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: GlassTheme.accentIndigo.withValues(alpha: 0.5),
-                        blurRadius: 22,
-                        spreadRadius: -2,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.confirmation_number_rounded,
-                    size: 32,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'Ticket Booking',
-                  style: TextStyle(
-                    color: g.textPrimary,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.4,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Direct IRCTC train ticket reservations and seat availability booking will be available right inside My Train in an upcoming update.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: g.textSecondary,
-                    fontSize: 14,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    Haptics.confirm();
-                    _showToast(
-                        'You will be notified when Ticket Booking goes live! 🔔');
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 14),
-                    decoration: BoxDecoration(
-                      gradient: GlassTheme.accent,
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: [
-                        BoxShadow(
-                          color: GlassTheme.accentIndigo.withValues(alpha: 0.5),
-                          blurRadius: 18,
-                          spreadRadius: -3,
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Icon(Icons.notifications_active_rounded,
-                            size: 18, color: Colors.white),
-                        SizedBox(width: 8),
-                        Text(
-                          'Notify Me When Available',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 120),
+        children: [
+          Text(
+            'Railway Services',
+            style: TextStyle(
+              color: g.textPrimary,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ),
+          const SizedBox(height: 6),
+          Text(
+            'Explore live station boards, seat availability, fare breakdowns, punctuality logs and cancelled trains.',
+            style: TextStyle(color: g.textSecondary, fontSize: 13, height: 1.4),
+          ),
+          const SizedBox(height: 20),
+          ...services.map(
+            (s) => Padding(
+              padding: const EdgeInsets.only(bottom: 12.0),
+              child: GestureDetector(
+                onTap: s.$5,
+                child: GlassSurface(
+                  radius: 20,
+                  blur: 16,
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: s.$4.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(s.$3, color: s.$4, size: 26),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              s.$1,
+                              style: TextStyle(
+                                color: g.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              s.$2,
+                              style: TextStyle(
+                                color: g.textSecondary,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: g.textMuted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1436,12 +1426,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget _dock(GlassTheme g) {
     final t = L10n.of(context);
     final items = [
-      (Icons.my_location_rounded, t.navTrack),
-      (Icons.confirmation_number_rounded, t.navPnr),
-      (Icons.book_online_rounded, t.navBook),
-      (Icons.person_rounded, t.navProfile),
+      t.navTrack,
+      t.navPnr,
+      t.navProfile,
     ];
-    const n = 4;
+    const n = 3;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 0, 28, 12),
@@ -1488,8 +1477,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         onTap: () => _onNav(i),
                         child: _dockItem(
                           g,
-                          items[i].$1,
-                          items[i].$2,
+                          i,
+                          items[i],
                           _navIndex == i,
                         ),
                       ),
@@ -1503,7 +1492,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _dockItem(GlassTheme g, IconData icon, String label, bool active) {
+  Widget _dockItem(GlassTheme g, int index, String label, bool active) {
     final color = active ? Colors.white : g.textSecondary;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -1513,7 +1502,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           scale: active ? 1.08 : 1.0,
           duration: const Duration(milliseconds: 240),
           curve: Curves.easeOutBack,
-          child: Icon(icon, size: 20, color: color),
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CustomPaint(
+              painter: index == 0
+                  ? _TrackIconPainter(color: color)
+                  : index == 1
+                      ? _PnrIconPainter(color: color)
+                      : _ProfileIconPainter(color: color),
+            ),
+          ),
         ),
         const SizedBox(height: 3),
         AnimatedDefaultTextStyle(
@@ -1991,53 +1990,57 @@ class _TrainCard extends StatelessWidget {
       blur: 20,
       strong: true,
       glow: true,
-      padding: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
       child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _RouteBanner(train: train, onTime: onTime),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      TrainNumberTag(train.number, fontSize: 14),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          train.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: g.textPrimary,
-                            fontSize: 16.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StaticRouteMapVisual(
+            trainNumber: train.number,
+            fromCode: train.fromCode,
+            toCode: train.toCode,
+            height: 130,
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              TrainNumberTag(train.number, fontSize: 14),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  train.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: g.textPrimary,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 10),
-                  _routeLine(g),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [for (final t in tags) _tagChip(g, t)],
-                  ),
-                ],
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _routeLine(g),
+          const SizedBox(height: 14),
+          Row(
+            children: [for (final t in tags) _tagChip(g, t)],
+          ),
+        ],
+      ),
     );
   }
 
   Widget _routeLine(GlassTheme g) {
     return Row(
       children: [
-        const Icon(Icons.trip_origin_rounded, size: 13, color: GlassTheme.accentViolet),
+        Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(
+            color: Color(0xFF4CAF50),
+            shape: BoxShape.circle,
+          ),
+        ),
         const SizedBox(width: 6),
         Flexible(
           child: Text(
@@ -2052,10 +2055,20 @@ class _TrainCard extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Icon(Icons.arrow_right_alt_rounded, size: 16, color: g.textMuted),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            '➔',
+            style: TextStyle(color: g.textMuted, fontSize: 13, fontWeight: FontWeight.bold),
+          ),
         ),
-        const Icon(Icons.place_rounded, size: 13, color: GlassTheme.accentBlue),
+        Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(
+            color: Color(0xFFE53935),
+            shape: BoxShape.circle,
+          ),
+        ),
         const SizedBox(width: 6),
         Flexible(
           child: Text(
@@ -2332,3 +2345,133 @@ class _RoutePainter extends CustomPainter {
   bool shouldRepaint(_RoutePainter old) =>
       old.padL != padL || old.padR != padR || old.y != y;
 }
+
+class _TrackIconPainter extends CustomPainter {
+  final Color color;
+  _TrackIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 2.5;
+
+    // Outer circle
+    canvas.drawCircle(center, radius, paint);
+
+    // Center filled dot
+    final fillPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, 2.2, fillPaint);
+
+    // Crosshair ticks
+    canvas.drawLine(Offset(center.dx, 0.5), Offset(center.dx, 3.0), paint);
+    canvas.drawLine(Offset(center.dx, size.height - 3.0), Offset(center.dx, size.height - 0.5), paint);
+    canvas.drawLine(Offset(0.5, center.dy), Offset(3.0, center.dy), paint);
+    canvas.drawLine(Offset(size.width - 3.0, center.dy), Offset(size.width - 0.5, center.dy), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrackIconPainter oldDelegate) => oldDelegate.color != color;
+}
+
+class _PnrIconPainter extends CustomPainter {
+  final Color color;
+  _PnrIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final strokePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(1, 3, size.width - 2, size.height - 6),
+        const Radius.circular(3),
+      ));
+
+    canvas.drawPath(path, strokePaint);
+
+    // Dotted inner divider line
+    final linePaint = Paint()
+      ..color = color.withValues(alpha: 0.7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+
+    canvas.drawLine(
+      Offset(size.width * 0.38, 5.5),
+      Offset(size.width * 0.38, size.height - 5.5),
+      linePaint,
+    );
+
+    // Horizontal ticket lines
+    final fillPaint = Paint()
+      ..color = color.withValues(alpha: 0.85)
+      ..style = PaintingStyle.fill;
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * 0.48, 7.0, 6.5, 1.8),
+        const Radius.circular(1),
+      ),
+      fillPaint,
+    );
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width * 0.48, 11.2, 4.5, 1.8),
+        const Radius.circular(1),
+      ),
+      fillPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PnrIconPainter oldDelegate) => oldDelegate.color != color;
+}
+
+class _ProfileIconPainter extends CustomPainter {
+  final Color color;
+  _ProfileIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fillPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    final center = Offset(size.width / 2, size.height * 0.32);
+    canvas.drawCircle(center, 4.0, fillPaint);
+
+    final strokePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    final bodyPath = Path()
+      ..moveTo(3, size.height - 2)
+      ..cubicTo(
+        3, size.height * 0.58,
+        size.width - 3, size.height * 0.58,
+        size.width - 3, size.height - 2,
+      );
+
+    canvas.drawPath(bodyPath, strokePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ProfileIconPainter oldDelegate) => oldDelegate.color != color;
+}
+
+
+

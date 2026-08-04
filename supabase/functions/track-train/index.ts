@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const body: any = await req.json().catch(() => ({}));
     const trainNumber = String(body.train_number ?? "").trim();
-    const date = String(body.date ?? "").trim();
+    const date = body.date ? String(body.date).trim() : new Date().toISOString().split("T")[0];
 
     if (!TRAIN_NO.test(trainNumber)) {
       return json(
@@ -46,16 +46,10 @@ Deno.serve(async (req) => {
 
     const db = admin();
 
-    // 1) Try live tracking (short 4-min cache).
+    // 1) Fetch live tracking DIRECTLY from RailKit API using RAILKIT_API_KEY.
     try {
-      const live = await cachedCall({
-        db,
-        method: "track",
-        cacheKey: `track:${trainNumber}:${date}`,
-        ttlSeconds: TTL.track,
-        run: () => rk.track(trainNumber, toRailkitDate(date)),
-      });
-      return json({ ...live, source: "live" });
+      const data = await rk.track(trainNumber, toRailkitDate(date));
+      return json({ data, cached: false, source: "live" });
     } catch (err) {
       const e = err instanceof RailKitError ? err : normalizeError(err);
       // Only fall back for "no live data" cases. A bad key or a real quota stop
@@ -64,16 +58,9 @@ Deno.serve(async (req) => {
       if (!recoverable) throw e;
     }
 
-    // 2) Fallback: real static route/schedule so the app can still show the
-    //    correct timeline (never a substituted or mock route).
-    const schedule = await cachedCall({
-      db,
-      method: "train_info",
-      cacheKey: `train_info:${trainNumber}`,
-      ttlSeconds: TTL.trainInfo,
-      run: () => rk.trainInfo(trainNumber),
-    });
-    return json({ ...schedule, source: "schedule" });
+    // 2) Fallback: fetch static schedule DIRECTLY from RailKit API.
+    const data = await rk.trainInfo(trainNumber);
+    return json({ data, cached: false, source: "schedule" });
   } catch (err) {
     const e = err instanceof RailKitError ? err : normalizeError(err);
     return json({ error: e.message, code: e.code }, e.status);

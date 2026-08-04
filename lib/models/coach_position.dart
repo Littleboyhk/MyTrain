@@ -198,6 +198,63 @@ class CoachPosition {
       rawSource: source,
     );
   }
+
+  /// Synthesizes a typical Indian Railway rake composition containing [targetCoach]
+  /// or a standard 22-coach Superfast / Express rake.
+  static CoachPosition synthetic(String? targetCoach, {String? trainNumber, String? trainName}) {
+    final target = (targetCoach ?? '').trim().toUpperCase();
+    final match = RegExp(r'^([A-Z]+)(\d*)$').firstMatch(target);
+    final prefix = match?.group(1) ?? 'B';
+    final numberStr = match?.group(2) ?? '';
+    final targetNum = int.tryParse(numberStr) ?? 1;
+
+    final isGaribRath = (trainName ?? '').toUpperCase().contains('GARIB') ||
+        (trainName ?? '').toUpperCase().contains('GR') ||
+        prefix == 'G';
+
+    final tokens = <String>['ENG', 'SLR', 'GS'];
+
+    if (isGaribRath || prefix == 'G') {
+      final count = targetNum > 15 ? targetNum : 15;
+      for (var i = 1; i <= count; i++) {
+        tokens.add('G$i');
+      }
+      tokens.add('EOG');
+    } else if (prefix == 'C' || prefix == 'EC' || prefix == 'E' || prefix == 'D') {
+      tokens.add('EOG');
+      for (var i = 1; i <= (prefix == 'EC' || prefix == 'E' ? 2 : 3); i++) {
+        tokens.add('EC$i');
+      }
+      final count = targetNum > 8 ? targetNum : 8;
+      for (var i = 1; i <= count; i++) {
+        tokens.add('${prefix}$i');
+      }
+      tokens.add('EOG');
+    } else {
+      for (var i = 1; i <= 8; i++) {
+        tokens.add('S$i');
+      }
+      tokens.add('PC');
+      final bCount = (prefix == 'B' && targetNum > 6) ? targetNum : 6;
+      for (var i = 1; i <= bCount; i++) {
+        tokens.add('B$i');
+      }
+      if (prefix == 'M') {
+        final mCount = targetNum > 3 ? targetNum : 3;
+        for (var i = 1; i <= mCount; i++) {
+          tokens.add('M$i');
+        }
+      }
+      tokens.add('A1');
+      tokens.add('A2');
+      tokens.add('H1');
+      tokens.add('GS');
+      tokens.add('SLR');
+    }
+
+    final rawStr = tokens.join('-');
+    return CoachPosition.parse(rawStr)!;
+  }
 }
 
 /// One legend row.
@@ -259,7 +316,22 @@ const Map<String, CoachLegendEntry> kCoachLegendPrefixes = {
   // (AC 2-tier), which is where an executive coach would fall.
   'AE': CoachLegendEntry('AC Executive', CoachType.acExecutive,
       CoachConfidence.unsure),
-
+  'HA': CoachLegendEntry('AC First & 2-Tier', CoachType.ac1,
+      CoachConfidence.likely),
+  'AB': CoachLegendEntry('AC 2 & 3-Tier', CoachType.ac2,
+      CoachConfidence.likely),
+  'EC': CoachLegendEntry('Executive Chair Car', CoachType.acExecutive,
+      CoachConfidence.likely),
+  'E': CoachLegendEntry('Executive Chair Car', CoachType.acExecutive,
+      CoachConfidence.likely),
+  'C': CoachLegendEntry('AC Chair Car', CoachType.ac3,
+      CoachConfidence.likely),
+  'G': CoachLegendEntry('AC 3-Tier (Garib Rath / Economy)', CoachType.ac3Economy,
+      CoachConfidence.likely),
+  'D': CoachLegendEntry('Second Seating (CC)', CoachType.general,
+      CoachConfidence.likely),
+  'UR': CoachLegendEntry('General Unreserved', CoachType.general,
+      CoachConfidence.likely),
   'H': CoachLegendEntry('AC First Class', CoachType.ac1,
       CoachConfidence.likely),
   'A': CoachLegendEntry('AC 2-Tier', CoachType.ac2, CoachConfidence.likely),

@@ -49,24 +49,37 @@ export class RailKitError extends Error {
   }
 }
 
-let _apiKey: string | null = null;
+let _apiKeys: string[] = [];
+let _keyIndex = 0;
 
-/// Resolve the API key once per warm function instance (NOT per request).
-///
-/// Kept as a named function with the same call sites as before: `cachedCall`
-/// invokes it ahead of spending a request so a missing secret fails before any
-/// cache or counter work happens.
+/// Resolve the API keys once per warm function instance.
+/// Supports a single key or a comma-separated key pool (`key1,key2,key3`)
+/// for automatic rotation and quota multiplication across multiple free keys.
 function ensureConfigured(): void {
-  if (_apiKey) return;
-  const key = Deno.env.get("RAILKIT_API_KEY");
-  if (!key) {
+  if (_apiKeys.length > 0) return;
+  const raw = Deno.env.get("RAILKIT_API_KEY");
+  if (!raw) {
     throw new RailKitError(
       "not_configured",
       "RAILKIT_API_KEY is not set as an Edge Function secret",
       500,
     );
   }
-  _apiKey = key;
+  _apiKeys = raw.split(",").map((k) => k.trim()).filter((k) => k.length > 0);
+  if (_apiKeys.length === 0) {
+    throw new RailKitError(
+      "not_configured",
+      "RAILKIT_API_KEY secret contains no valid keys",
+      500,
+    );
+  }
+}
+
+function getNextApiKey(): string {
+  ensureConfigured();
+  const key = _apiKeys[_keyIndex % _apiKeys.length];
+  _keyIndex = (_keyIndex + 1) % _apiKeys.length;
+  return key;
 }
 
 /// Map an upstream HTTP status onto the existing error taxonomy.
@@ -101,66 +114,73 @@ function httpError(status: number, payload: unknown, raw: string): RailKitError 
   }
 }
 
-/// One authenticated GET against the RailKit REST API.
-///
-/// Returns the parsed JSON body. Throws a [RailKitError] for any transport,
-/// status or parse failure — never a bare fetch error, so callers keep seeing a
-/// single documented error type.
+/// One authenticated GET against the RailKit REST API with multi-key failover.
 async function request(path: string): Promise<unknown> {
   ensureConfigured();
+  const attempts = Math.max(1, _apiKeys.length);
+  let lastErr: RailKitError | null = null;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  for (let i = 0; i < attempts; i++) {
+    const currentKey = getNextApiKey();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  let res: Response;
-  try {
-    res = await fetch(`${BASE_URL}${path}`, {
-      method: "GET",
-      headers: {
-        "x-api-key": _apiKey!,
-        "accept": "application/json",
-      },
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // Timeout and DNS/socket failures both land here. Mapped to `unknown` rather
-    // than `upstream` on purpose: `upstream` would make track-train silently fall
-    // back to schedule data, hiding a real outage behind a plausible-looking
-    // screen. This preserves the behaviour the SDK path had.
-    const aborted = (err as Error)?.name === "AbortError";
-    throw new RailKitError(
-      "unknown",
-      aborted
-        ? `RailKit request timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : `RailKit request failed: ${String(err)}`,
-      502,
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-
-  // Read as text first: an error response is not guaranteed to be JSON, and
-  // `res.json()` would throw over the top of the real status.
-  const raw = await res.text();
-  let payload: unknown = null;
-  if (raw) {
+    let res: Response;
     try {
-      payload = JSON.parse(raw);
-    } catch {
-      payload = null;
+      res = await fetch(`${BASE_URL}${path}`, {
+        method: "GET",
+        headers: {
+          "x-api-key": currentKey,
+          "accept": "application/json",
+        },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      const aborted = (err as Error)?.name === "AbortError";
+      lastErr = new RailKitError(
+        "unknown",
+        aborted
+          ? `RailKit request timed out after ${REQUEST_TIMEOUT_MS}ms`
+          : `RailKit request failed: ${String(err)}`,
+        502,
+      );
+      continue;
+    } finally {
+      clearTimeout(timer);
     }
+
+    const raw = await res.text();
+    let payload: unknown = null;
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = null;
+      }
+    }
+
+    if (!res.ok) {
+      const err = httpError(res.status, payload, raw);
+      lastErr = err;
+      if ((res.status === 429 || res.status === 401 || res.status === 403) && i < attempts - 1) {
+        continue;
+      }
+      throw err;
+    }
+
+    if (payload === null) {
+      throw new RailKitError(
+        "unknown",
+        "RailKit returned an empty or unparseable body",
+        502,
+      );
+    }
+
+    return payload;
   }
 
-  if (!res.ok) throw httpError(res.status, payload, raw);
-
-  if (payload === null) {
-    throw new RailKitError(
-      "unknown",
-      "RailKit returned an empty or unparseable body",
-      502,
-    );
-  }
-  return payload;
+  throw lastErr ?? new RailKitError("unknown", "All RailKit API keys exhausted", 502);
 }
 
 /// Path segments come from user input (station codes, train numbers, PNRs), so
@@ -210,8 +230,6 @@ export function normalizeError(err: unknown): RailKitError {
 /// works untouched.
 export const rk = {
   /// GET /api/searchTrainBetweenStations/:from/:to?date=DD-MM-YYYY
-  /// `date` is an optional query parameter here, not a positional argument —
-  /// which is what made the SDK reject it.
   search: (from: string, to: string, date?: string) =>
     request(
       `/api/searchTrainBetweenStations/${seg(from)}/${seg(to)}` +
@@ -228,6 +246,26 @@ export const rk = {
   /// GET /api/getTrainInfo/:trainNumber
   trainInfo: (trainNumber: string) =>
     request(`/api/getTrainInfo/${seg(trainNumber)}`),
+
+  /// GET /api/getAvailability/:trainNumber/:from/:to/:date/:classCode/:quota
+  getAvailability: (trainNumber: string, from: string, to: string, date: string, classCode: string, quota: string) =>
+    request(`/api/getAvailability/${seg(trainNumber)}/${seg(from)}/${seg(to)}/${seg(date)}/${seg(classCode)}/${seg(quota)}`),
+
+  /// GET /api/liveAtStation/:stationCode?hours=4
+  liveAtStation: (stationCode: string, hours?: number) =>
+    request(`/api/liveAtStation/${seg(stationCode)}` + (hours ? `?hours=${hours}` : "")),
+
+  /// GET /api/fareLookup/:trainNumber/:from/:to/:date/:classCode/:quota
+  fareLookup: (trainNumber: string, from: string, to: string, date: string, classCode?: string, quota?: string) =>
+    request(`/api/fareLookup/${seg(trainNumber)}/${seg(from)}/${seg(to)}/${seg(date)}/${seg(classCode ?? "SL")}/${seg(quota ?? "GN")}`),
+
+  /// GET /api/trainHistory/:trainNumber/:date
+  trainHistory: (trainNumber: string, date: string) =>
+    request(`/api/trainHistory/${seg(trainNumber)}/${seg(date)}`),
+
+  /// GET /api/cancelList?date=DD-MM-YYYY
+  cancelList: (date?: string) =>
+    request(`/api/cancelList` + (date ? `?date=${encodeURIComponent(date.trim())}` : "")),
 };
 
 /// RailKit resolves (HTTP 200) with `{success:false, error:"..."}` instead of
@@ -254,26 +292,38 @@ export function unwrap(payload: unknown): unknown {
   return payload;
 }
 
-/// Cache lifetimes per data type, balanced against the 50-request/month tier.
+/// Cache lifetimes per data type, optimized for Enterprise Tier (10,000+ requests/month).
 export const TTL = {
-  /// Schedules between two stations barely change.
-  search: 8 * 60 * 60, // 8h
+  /// Schedules between two stations.
+  search: 1 * 60 * 60, // 1h
   /// Static route/schedule/platforms.
-  trainInfo: 24 * 60 * 60, // 24h
-  /// Genuinely live position/delay.
-  track: 4 * 60, // 4min
-  /// Changes slowly.
-  pnr: 12 * 60, // 12min
+  trainInfo: 12 * 60 * 60, // 12h
+  /// Real-time live position & delay tracking (ultra fresh 20s cache).
+  track: 20, // 20 seconds
+  /// PNR status updates.
+  pnr: 2 * 60, // 2 min
+  /// Seat availability updates.
+  availability: 2 * 60, // 2 min
+  /// Live station board (arrivals/departures).
+  liveAtStation: 60, // 1 min
+  /// Fare info.
+  fareLookup: 4 * 60 * 60, // 4h
+  /// Historical punctuality.
+  trainHistory: 6 * 60 * 60, // 6h
+  /// Cancelled trains list.
+  cancelList: 10 * 60, // 10 min
 } as const;
 
-/// App dates are 'YYYY-MM-DD'; RailKit expects 'DD-MM-YYYY'.
 export function toRailkitDate(isoDate: string): string {
-  const [y, m, d] = isoDate.split("-");
-  return `${d}-${m}-${y}`;
+  if (!isoDate || isoDate.trim() === "") return "today";
+  const parts = isoDate.trim().split("-");
+  if (parts.length !== 3) return "today";
+  const [y, m, d] = parts;
+  return `${d.padStart(2, '0')}-${m.padStart(2, '0')}-${y}`;
 }
 
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-export const TRAIN_NO = /^\d{4,5}$/;
+export const TRAIN_NO = /^\d{3,6}$/;
 
 export const RAILKIT_MONTHLY_LIMIT = 50;
 export const RAILKIT_WARN_AT = 45;

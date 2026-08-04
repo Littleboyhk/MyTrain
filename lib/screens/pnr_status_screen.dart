@@ -6,6 +6,7 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 import '../data/pnr_service.dart';
 import '../data/railkit_service.dart';
+import '../data/saved_pnr_store.dart';
 import '../l10n/app_localizations.dart';
 import '../models/pnr_status.dart';
 import '../models/train_summary.dart';
@@ -21,6 +22,7 @@ import '../widgets/icon_action_button.dart';
 import '../widgets/liquid_glass_button.dart';
 import '../widgets/mesh_background.dart';
 import '../widgets/train_number_tag.dart';
+import 'coach_position_screen.dart';
 
 /// PNR status: enter a 10-digit PNR, then see the train/route header, chart
 /// status, and a per-passenger booking → current comparison. Backed by the
@@ -131,7 +133,21 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
                     onSubmit: _submit,
                     onSample: _fillSample,
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+                  _SavedTicketsSection(
+                    onSelectPnr: (savedPnr) {
+                      Haptics.selection();
+                      _controller.text = savedPnr.pnr;
+                      _pnr = savedPnr.pnr;
+                      setState(() {
+                        _submittedPnr = savedPnr.pnr;
+                        _result = savedPnr;
+                        _phase = _Phase.result;
+                      });
+                      _submit();
+                    },
+                  ),
+                  const SizedBox(height: 16),
                   AnimatedSwitcher(
                     duration: Motion.medium,
                     switchInCurve: Motion.standard,
@@ -448,7 +464,12 @@ class _PnrResultView extends StatelessWidget {
         confirmed: result.confirmedCount,
       ),
       for (final p in result.passengers)
-        _PassengerCard(passenger: p, travelClass: result.travelClass),
+        _PassengerCard(
+          passenger: p,
+          travelClass: result.travelClass,
+          trainNumber: result.train.number,
+          trainName: result.train.name,
+        ),
       const _FooterNote(),
     ];
 
@@ -877,18 +898,23 @@ class _PassengersHeader extends StatelessWidget {
 }
 
 class _PassengerCard extends StatelessWidget {
-  const _PassengerCard({required this.passenger, required this.travelClass});
+  const _PassengerCard({
+    required this.passenger,
+    required this.travelClass,
+    required this.trainNumber,
+    required this.trainName,
+  });
 
   final PnrPassenger passenger;
-
-  /// Needed for the bay view's gating — the layout convention is class-specific
-  /// and only sourced for sleeper. Null (unknown class) gates the grid off.
   final String? travelClass;
+  final String trainNumber;
+  final String trainName;
 
   @override
   Widget build(BuildContext context) {
     final g = context.glass;
-    return GlassSurface(      radius: 18,
+    return GlassSurface(
+      radius: 18,
       strong: true,
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -925,15 +951,68 @@ class _PassengerCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           _comparison(g),
-          // Bay diagram for confirmed SL/3A berths, the plain berth line for
-          // every other class. BerthBayView owns that choice and renders nothing
-          // at all for RAC/waitlisted/cancelled.
           if (passenger.current.status == PassengerStatus.confirmed) ...[
             const SizedBox(height: 14),
             BerthBayView(
               travelClass: travelClass,
               allocation: passenger.current,
             ),
+            if (passenger.current.coach != null) ...[
+              const SizedBox(height: 12),
+              InkWell(
+                onTap: () {
+                  Haptics.selection();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CoachPositionScreen(
+                        trainNumber: trainNumber,
+                        trainName: trainName,
+                        initialCoach: passenger.current.coach,
+                        initialBerth: int.tryParse(passenger.current.berth ?? ''),
+                      ),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [
+                        Color(0xFF6366F1), // Electric Indigo
+                        Color(0xFF8B5CF6), // Vibrant Violet
+                      ],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF6366F1).withValues(alpha: 0.45),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.pin_drop_rounded, size: 17, color: Colors.white),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Locate Coach ${passenger.current.coach}${passenger.current.berth != null ? ' · Berth #${passenger.current.berth}' : ''} ➔',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),
@@ -1350,5 +1429,176 @@ class _GlassDisc extends StatelessWidget {
     }
 
     return disc;
+  }
+}
+
+// ===========================================================================
+// Saved Tickets Section
+// ===========================================================================
+class _SavedTicketsSection extends StatefulWidget {
+  const _SavedTicketsSection({required this.onSelectPnr});
+  final ValueChanged<PnrResult> onSelectPnr;
+
+  @override
+  State<_SavedTicketsSection> createState() => _SavedTicketsSectionState();
+}
+
+class _SavedTicketsSectionState extends State<_SavedTicketsSection> {
+  List<PnrResult> _pnrs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  void _reload() async {
+    final list = await SavedPnrStore.instance.getSavedPnrs();
+    if (mounted) setState(() => _pnrs = list);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_pnrs.isEmpty) return const SizedBox.shrink();
+    final g = context.glass;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.confirmation_number_rounded,
+                size: 16, color: GlassTheme.accentIndigo),
+            const SizedBox(width: 6),
+            Text(
+              'My Saved Tickets (${_pnrs.length})',
+              style: TextStyle(
+                color: g.textPrimary,
+                fontSize: 14.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Column(
+          children: [
+            for (final p in _pnrs) ...[
+              _SavedTicketCard(
+                result: p,
+                onTap: () => widget.onSelectPnr(p),
+                onDelete: () async {
+                  await SavedPnrStore.instance.removePnr(p.pnr);
+                  _reload();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SavedTicketCard extends StatelessWidget {
+  const _SavedTicketCard({
+    required this.result,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  final PnrResult result;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = context.glass;
+    final firstPassenger = result.passengers.first;
+    final status = firstPassenger.current.status;
+    final pillText = firstPassenger.current.display;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: GlassSurface(
+        radius: 16,
+        strong: true,
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'PNR ${result.pnr}',
+                  style: TextStyle(
+                    color: g.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: status.color.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: status.color.withValues(alpha: 0.6),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    pillText,
+                    style: TextStyle(
+                      color: status.color,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '${result.train.number} · ${result.train.name}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: g.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  '${result.train.fromCode} ➔ ${result.train.toCode}',
+                  style: TextStyle(
+                    color: g.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                if (result.travelClass != null)
+                  Text(
+                    result.travelClass!,
+                    style: const TextStyle(
+                      color: GlassTheme.accentBlue,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

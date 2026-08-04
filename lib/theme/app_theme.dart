@@ -33,6 +33,7 @@ class AppTheme {
       scaffoldBackgroundColor: Colors.transparent,
       colorScheme: colorScheme,
       textTheme: _textTheme(base.textTheme, p, fontFamily),
+      iconTheme: IconThemeData(color: p.textPrimary),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,

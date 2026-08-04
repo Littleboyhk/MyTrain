@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/rail_station.dart';
 import '../models/train_summary.dart';
@@ -545,3 +546,7 @@ class TrainRepository {
 
 /// Shared repository instance.
 const trainRepository = TrainRepository();
+
+/// Riverpod provider for TrainRepository.
+final trainRepositoryProvider =
+    Provider<TrainRepository>((ref) => const TrainRepository());

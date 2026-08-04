@@ -47,10 +47,8 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   // 56 not 58: the sliver can hand back a fraction less than minExtent while
   // pinning, and a fixed 58 overflowed the Column by 1px on web.
-  static const double _compactBar = 56;
-  // 124: icon row (42) + gap (8) + date pills (58) = 108, leaving 16px for
-  // the pill's bottom border-radius (14px) and box-shadow to render fully.
-  static const double _extras = 124;
+  static const double _compactBar = 52;
+  static const double _extras = 130;
 
   @override
   double get minExtent => topPadding + _compactBar + _extras;
@@ -82,8 +80,6 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
       padding: EdgeInsets.only(top: topPadding),
       child: Column(
         children: [
-          // Loose so it can give back a pixel if the sliver allocates slightly
-          // less than minExtent, instead of overflowing.
           Flexible(fit: FlexFit.loose, child: _buildCompactBar(context)),
           Expanded(
             child: _buildExtras(context),
@@ -116,7 +112,6 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
                   Row(
                     children: [
                       if (trainNumber != '—') ...[
-                        // Compact: this bar is height-constrained when pinned.
                         TrainNumberTag(trainNumber, fontSize: 11),
                         const SizedBox(width: 8),
                       ],
@@ -146,40 +141,41 @@ class TrackingHeaderDelegate extends SliverPersistentHeaderDelegate {
   }
 
   Widget _buildExtras(BuildContext context) {
-    return SizedBox(
-      height: _extras,
+    return SingleChildScrollView(
+      physics: const NeverScrollableScrollPhysics(),
+      clipBehavior: Clip.none,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 12, 0),
+            padding: const EdgeInsets.fromLTRB(16, 2, 12, 0),
             child: Row(
               children: [
                 Expanded(child: _routeSummary(context)),
                 IconActionButton(
                   icon: Icons.notifications_none_rounded,
                   onTap: onAlarm,
-                  size: 38,
-                  iconSize: 19,
+                  size: 36,
+                  iconSize: 18,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 IconActionButton(
                   icon: Icons.event_seat_outlined,
                   onTap: onCoach,
-                  size: 38,
-                  iconSize: 19,
+                  size: 36,
+                  iconSize: 18,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 IconActionButton(
                   icon: Icons.ios_share_rounded,
                   onTap: onShare,
-                  size: 38,
-                  iconSize: 19,
+                  size: 36,
+                  iconSize: 18,
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 2),
           DatePillSelector(
             days: days,
             selectedIndex: selectedDay,

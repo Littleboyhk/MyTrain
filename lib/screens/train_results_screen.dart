@@ -23,6 +23,12 @@ import '../widgets/mesh_background.dart';
 import '../widgets/running_days_row.dart';
 import '../widgets/train_number_tag.dart';
 import '../widgets/report_missing_train_sheet.dart';
+import '../widgets/route_mini_visual.dart';
+import '../widgets/static_route_map_visual.dart';
+import '../widgets/split_journey_card.dart';
+import '../widgets/split_journey_disclaimer.dart';
+import '../data/split_journey_service.dart';
+import '../models/split_journey_combo.dart';
 import 'live_tracking_screen.dart';
 
 /// Search results for a chosen route (FROM → TO).
@@ -66,6 +72,7 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
   _DateFilter _dateFilter = _DateFilter.allDates;
   DateTime? _calendarDate;
   _SortBy _sort = _SortBy.departure;
+  bool _showTightConnections = false;
 
   @override
   void initState() {
@@ -402,21 +409,12 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
 
         final all = snapshot.data ?? const <TrainSummary>[];
         if (all.isEmpty) {
-          return _message(
-            Icons.search_off_rounded,
-            'No trains found for ${widget.from.code} → ${widget.to.code}',
-            g.textSecondary,
-          );
+          return _buildSplitJourneyFallback(context, g);
         }
 
         final filtered = _applyFilters(all);
         if (filtered.isEmpty) {
-          return _message(
-            Icons.event_busy_rounded,
-            'None of the ${all.length} trains on this route run on '
-            '$_datePillLabel.',
-            g.textSecondary,
-          );
+          return _buildSplitJourneyFallback(context, g);
         }
 
         final rows = _groupByLeg(filtered);
@@ -461,6 +459,92 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
               );
             },
           ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSplitJourneyFallback(BuildContext context, GlassTheme g) {
+    return FutureBuilder<List<SplitJourneyCombo>>(
+      future: ref.read(splitJourneyServiceProvider).findSplitJourneys(
+            from: widget.from,
+            to: widget.to,
+            date: _effectiveDate,
+          ),
+      builder: (ctx, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: GlassTheme.accentViolet),
+                const SizedBox(height: 16),
+                Text(
+                  'No direct tickets — searching split journeys via junctions…',
+                  textAlign: TextAlign.center,
+                  style: AppText.label.copyWith(
+                    color: g.textSecondary,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final combos = snapshot.data ?? const <SplitJourneyCombo>[];
+        if (combos.isEmpty) {
+          return _message(
+            Icons.search_off_rounded,
+            'No direct trains or split routes found for ${widget.from.code} → ${widget.to.code}',
+            g.textSecondary,
+          );
+        }
+
+        final tightCount = combos.where((c) => c.isTightConnection).length;
+        final visibleCombos = _showTightConnections
+            ? combos
+            : combos.where((c) => !c.isTightConnection).toList();
+
+        return ListView.builder(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 130),
+          itemCount: visibleCombos.length + 1,
+          itemBuilder: (ctx, idx) {
+            if (idx == 0) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      'NO DIRECT TICKETS — TRY A SPLIT JOURNEY',
+                      style: AppText.overline.copyWith(color: GlassTheme.accentViolet),
+                    ),
+                  ),
+                  SplitJourneyDisclaimer(
+                    tightCount: tightCount,
+                    showTightConnections: _showTightConnections,
+                    onToggleTightConnections: (val) {
+                      setState(() => _showTightConnections = val);
+                    },
+                  ),
+                ],
+              );
+            }
+            final combo = visibleCombos[idx - 1];
+            return SplitJourneyCard(
+              combo: combo,
+              onTap: () {
+                Haptics.tap();
+                Navigator.of(context).push(
+                  CupertinoPageRoute(
+                    builder: (_) => LiveTrackingScreen(train: combo.leg1),
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -870,6 +954,12 @@ class _TrainCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                StaticRouteMapVisual(
+                  trainNumber: train.number,
+                  fromCode: train.fromCode,
+                  toCode: train.toCode,
+                  height: 130,
+                ),
                 // Train number badge, left-aligned.
                 Row(
                   children: [
@@ -882,7 +972,7 @@ class _TrainCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
                 // Departure → duration → arrival, one row.
                 JourneyDurationBar(

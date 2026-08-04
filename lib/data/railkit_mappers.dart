@@ -34,6 +34,11 @@ import '../models/rail_station.dart';
 import '../models/station.dart';
 import '../models/station_live_status.dart';
 import '../models/train_summary.dart';
+import '../models/seat_availability.dart';
+import '../models/station_board.dart';
+import '../models/fare_info.dart';
+import '../models/train_history_entry.dart';
+import '../models/cancelled_train.dart';
 import '../utils/train_type_helper.dart';
 import 'train_repository.dart';
 
@@ -526,7 +531,15 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
     if (m['timeline'] is! List) return null;
 
     final note = _s(m['statusNote']);
-    final current = _s(m['currentStationCode']);
+    var current = _s(_first(m, [
+      'currentStationCode',
+      'current_station_code',
+      'currentStation',
+      'current_station',
+      'lastStationCode',
+      'last_station_code',
+      'currentStnCode',
+    ]));
 
     // Clock times in the timeline are bare `HH:MM`, so they need a date to hang
     // off. `date` looks like "31-Mar-2026"; if it will not parse we fall back to
@@ -549,8 +562,12 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
       final s = raw.cast<String, dynamic>();
 
       final stage = _stageFromRailkit(_s(s['status']));
+      final code = _s(_first(s, ['stationCode', 'code', 'stnCode', 'station_code'])).toUpperCase();
 
-      if (stage != StationLiveStage.upcoming) {
+      if (stage != StationLiveStage.upcoming && code.isNotEmpty) {
+        if (current.isEmpty || stage == StationLiveStage.current || stage == StationLiveStage.passed) {
+          current = code;
+        }
         for (final key in ['departure', 'arrival']) {
           final leg = s[key];
           if (leg is Map) {
@@ -564,8 +581,6 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
       // `intermediate` points carry no times, platform or distance — only an
       // identity and a status — so they contribute nothing here.
       if (_s(s['type']).toLowerCase() != 'stoppage') continue;
-
-      final code = _s(s['stationCode']).toUpperCase();
       if (code.isEmpty) continue;
 
       // Advance the day counter when this stop's scheduled time runs backwards
@@ -595,11 +610,16 @@ RailkitLiveStatus? liveStatusFromRailkitTrack(dynamic data) {
       );
     }
 
+    final hasDepartedStops = perStation.values.any((s) =>
+        s.stage == StationLiveStage.passed ||
+        s.stage == StationLiveStage.current);
+
     return RailkitLiveStatus(
       currentStationCode: current.isEmpty ? null : current,
       statusNote: note,
       delayMinutes: delay,
       started: current.isNotEmpty ||
+          hasDepartedStops ||
           !note.toLowerCase().contains('yet to start'),
       stationStatus: perStation,
     );
@@ -967,5 +987,198 @@ DateTime? _parseDateOrNull(dynamic raw) {
 /// recognised only five berth-type codes (dropping the real-world `SLB`, `SUB`
 /// and `SM`, and occasionally storing a dropped code as the coach). One parser
 /// now serves both providers and invents nothing.
+/// Delegates to [SeatAllocation.fromStatusString].
 SeatAllocation _seatFromStatus(String status) =>
     SeatAllocation.fromStatusString(status);
+
+// ---------------------------------------------------------------------------
+// Additional RailKit Feature Mappers
+// ---------------------------------------------------------------------------
+
+SeatAvailability? availabilityFromRailkit(
+  dynamic data,
+  String from,
+  String to,
+  String classCode,
+  String quota,
+) {
+  try {
+    dynamic node = data;
+    if (node is Map && node['data'] != null) node = node['data'];
+    if (node is! Map) return null;
+    final m = node.cast<String, dynamic>();
+
+    final trainNum = _s(m['trainNumber'] ?? m['train_number'] ?? m['trainNo']);
+    final list = m['availability'] ?? m['days'] ?? m['availability_list'];
+
+    final days = <AvailabilityDay>[];
+    if (list is List) {
+      for (final item in list) {
+        if (item is Map) {
+          days.add(AvailabilityDay.fromMap(item.cast<String, dynamic>()));
+        }
+      }
+    }
+
+    return SeatAvailability(
+      trainNumber: trainNum,
+      fromStation: from,
+      toStation: to,
+      classCode: classCode,
+      quota: quota,
+      days: days,
+    );
+  } catch (e) {
+    debugPrint('[RailKit] availability mapping failed: $e');
+    return null;
+  }
+}
+
+List<StationBoardEntry> stationBoardFromRailkit(dynamic data) {
+  final entries = <StationBoardEntry>[];
+  try {
+    dynamic node = data;
+    if (node is Map && node['data'] != null) node = node['data'];
+    if (node is List) {
+      for (final raw in node) {
+        if (raw is Map) {
+          final m = raw.cast<String, dynamic>();
+          final delayMins = int.tryParse(_s(m['delay'] ?? m['delayMinutes'] ?? '0')) ?? 0;
+          entries.add(
+            StationBoardEntry(
+              trainNumber: _s(m['trainNumber'] ?? m['train_number'] ?? m['trainNo']),
+              trainName: _s(m['trainName'] ?? m['train_name'] ?? 'Train'),
+              origin: _s(m['origin'] ?? m['from'] ?? ''),
+              destination: _s(m['destination'] ?? m['to'] ?? ''),
+              scheduledTime: _s(m['scheduledTime'] ?? m['std'] ?? m['sta'] ?? ''),
+              expectedTime: _s(m['expectedTime'] ?? m['eta'] ?? m['etd'] ?? ''),
+              delayMinutes: delayMins,
+              platform: _s(m['platform'] ?? '—'),
+              status: _s(m['status'] ?? (delayMins > 0 ? 'DELAYED' : 'ON TIME')),
+            ),
+          );
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('[RailKit] station board mapping failed: $e');
+  }
+  return entries;
+}
+
+FareBreakdown? fareFromRailkit(
+  dynamic data,
+  String from,
+  String to,
+  String trainNumber,
+) {
+  try {
+    dynamic node = data;
+    if (node is Map && node['data'] != null) node = node['data'];
+    if (node is! Map) return null;
+    final m = node.cast<String, dynamic>();
+
+    final fareList = m['fares'] ?? m['fare_list'] ?? m['classes'];
+    final fares = <ClassFare>[];
+    if (fareList is List) {
+      for (final item in fareList) {
+        if (item is Map) {
+          final f = item.cast<String, dynamic>();
+          fares.add(
+            ClassFare(
+              classCode: _s(f['classCode'] ?? f['class_code'] ?? f['code'] ?? 'SL'),
+              className: _s(f['className'] ?? f['class_name'] ?? f['name'] ?? ''),
+              baseFare: double.tryParse(_s(f['baseFare'] ?? f['base_fare'] ?? '0')) ?? 0.0,
+              totalFare: double.tryParse(_s(f['totalFare'] ?? f['total_fare'] ?? f['fare'] ?? '0')) ?? 0.0,
+            ),
+          );
+        }
+      }
+    }
+
+    return FareBreakdown(
+      trainNumber: trainNumber,
+      fromStation: from,
+      toStation: to,
+      fares: fares,
+    );
+  } catch (e) {
+    debugPrint('[RailKit] fare mapping failed: $e');
+    return null;
+  }
+}
+
+TrainHistoryEntry? trainHistoryFromRailkit(
+  dynamic data,
+  String trainNumber,
+  String date,
+) {
+  try {
+    dynamic node = data;
+    if (node is Map && node['data'] != null) node = node['data'];
+    if (node is! Map) return null;
+    final m = node.cast<String, dynamic>();
+
+    final stopsRaw = m['history'] ?? m['stops'] ?? m['timeline'];
+    final stops = <StationHistoryEntry>[];
+    if (stopsRaw is List) {
+      for (final raw in stopsRaw) {
+        if (raw is Map) {
+          final s = raw.cast<String, dynamic>();
+          stops.add(
+            StationHistoryEntry(
+              stationCode: _s(s['stationCode'] ?? s['code']),
+              stationName: _s(s['stationName'] ?? s['name']),
+              scheduledArrival: _s(s['scheduledArrival'] ?? s['sta']),
+              actualArrival: _s(s['actualArrival'] ?? s['eta']),
+              scheduledDeparture: _s(s['scheduledDeparture'] ?? s['std']),
+              actualDeparture: _s(s['actualDeparture'] ?? s['etd']),
+              delayMinutes: int.tryParse(_s(s['delay'] ?? '0')) ?? 0,
+            ),
+          );
+        }
+      }
+    }
+
+    return TrainHistoryEntry(
+      trainNumber: trainNumber,
+      date: date,
+      statusNote: _s(m['statusNote'] ?? m['status'] ?? ''),
+      totalDelayMinutes: int.tryParse(_s(m['totalDelay'] ?? '0')) ?? 0,
+      stops: stops,
+    );
+  } catch (e) {
+    debugPrint('[RailKit] history mapping failed: $e');
+    return null;
+  }
+}
+
+List<CancelledTrain> cancelledTrainsFromRailkit(dynamic data) {
+  final result = <CancelledTrain>[];
+  try {
+    dynamic node = data;
+    if (node is Map && node['data'] != null) node = node['data'];
+    if (node is List) {
+      for (final raw in node) {
+        if (raw is Map) {
+          final m = raw.cast<String, dynamic>();
+          result.add(
+            CancelledTrain(
+              trainNumber: _s(m['trainNumber'] ?? m['train_number'] ?? m['trainNo']),
+              trainName: _s(m['trainName'] ?? m['train_name'] ?? 'Train'),
+              origin: _s(m['origin'] ?? m['from'] ?? ''),
+              destination: _s(m['destination'] ?? m['to'] ?? ''),
+              cancellationType: _s(m['cancellationType'] ?? m['type'] ?? 'FULL'),
+              startDate: _s(m['startDate'] ?? m['date'] ?? ''),
+              endDate: _s(m['endDate'] ?? m['date'] ?? ''),
+            ),
+          );
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('[RailKit] cancelled trains mapping failed: $e');
+  }
+  return result;
+}
+

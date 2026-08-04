@@ -6,18 +6,21 @@ import '../models/train_summary.dart';
 import 'railkit_mappers.dart';
 import 'railkit_service.dart';
 import 'rapidapi_service.dart';
+import 'saved_pnr_store.dart';
 import 'train_repository.dart';
 
 /// Real PNR lookup service backed by RapidAPI IRCTC.
 class PnrService {
   const PnrService();
 
+  static const String sampleGaribRath = '4240508234';
   static const String sampleConfirmed = '2451087345';
   static const String sampleWaitlisted = '8730561299';
   static const String sampleMixed = '4519023876';
 
   /// Featured samples surfaced as quick-fill chips on the input screen.
   static const List<({String pnr, String label})> samples = [
+    (pnr: sampleGaribRath, label: 'Garib Rath G15'),
     (pnr: sampleConfirmed, label: 'Confirmed'),
     (pnr: sampleWaitlisted, label: 'Waitlisted'),
     (pnr: sampleMixed, label: 'Mixed'),
@@ -39,11 +42,13 @@ class PnrService {
   /// later" instead of falling back to sample data.
   Future<PnrResult?> lookup(String pnr) async {
     const railkit = RailKitService();
+    PnrResult? result;
+
     if (railkit.isAvailable) {
       try {
         final res = await railkit.checkPnr(pnr);
         final parsed = pnrFromRailkit(res.data, pnr);
-        if (parsed != null) return parsed;
+        if (parsed != null) result = parsed;
       } on RailKitException catch (e) {
         if (e.isQuota) rethrow; // surface; do NOT fall back to mock
         debugPrint('[PnrService] RailKit note: $e');
@@ -52,23 +57,37 @@ class PnrService {
       }
     }
 
-    try {
-      final realResult = await rapidApiService.getPnrStatus(pnr);
-      if (realResult != null) return realResult;
-    } catch (e) {
-      debugPrint('[PnrService] RapidAPI PNR lookup notice: $e');
+    if (result == null) {
+      try {
+        final realResult = await rapidApiService.getPnrStatus(pnr);
+        if (realResult != null) result = realResult;
+      } catch (e) {
+        debugPrint('[PnrService] RapidAPI PNR lookup notice: $e');
+      }
     }
 
-    // DATA INTEGRITY: only the three explicitly-advertised demo PNRs may return
-    // canned data (they're surfaced as "sample" chips in the UI). Any OTHER pnr
-    // returns null -> "PNR not found", because inventing a confirmed booking
-    // for a real passenger's PNR is a trust-breaking bug.
-    return switch (pnr) {
-      sampleConfirmed => _confirmed(pnr),
-      sampleWaitlisted => _waitlisted(pnr),
-      sampleMixed => _mixed(pnr),
-      _ => null,
-    };
+    if (result == null) {
+      // DATA INTEGRITY: only the explicitly-advertised demo PNRs may return
+      // canned data.
+      result = switch (pnr) {
+        sampleGaribRath => _garibRath(pnr),
+        sampleConfirmed => _confirmed(pnr),
+        sampleWaitlisted => _waitlisted(pnr),
+        sampleMixed => _mixed(pnr),
+        _ => null,
+      };
+    }
+
+    if (result != null) {
+      // Auto-save to My Tickets list & check for WL -> CNF status upgrades
+      SavedPnrStore.instance.savePnr(result).then((upgrade) {
+        if (upgrade != null) {
+          debugPrint('[PnrService] 🚨 Status upgrade detected for PNR ${upgrade.pnr}: Passenger ${upgrade.passengerIndex} is now ${upgrade.newStatus}!');
+        }
+      });
+    }
+
+    return result;
   }
 
   DateTime _daysFromNow(int days) {
@@ -79,6 +98,24 @@ class PnrService {
   // ---------------------------------------------------------------------------
   // Sample states
   // ---------------------------------------------------------------------------
+
+  /// Garib Rath Express — confirmed G15 / 5 berth.
+  PnrResult _garibRath(String pnr) {
+    return PnrResult(
+      pnr: pnr,
+      train: _demoTrain('12257'),
+      journeyDate: _daysFromNow(18),
+      travelClass: '3A',
+      chartStatus: ChartStatus.notPrepared,
+      passengers: const [
+        PnrPassenger(
+          index: 1,
+          booking: SeatAllocation.confirmed('G15', '5', 'Middle berth'),
+          current: SeatAllocation.confirmed('G15', '5', 'Middle berth'),
+        ),
+      ],
+    );
+  }
 
   /// Fully confirmed — chart prepared, every passenger has a berth. Two of the
   /// three moved up from RAC / waitlist, showcasing the booking→current diff.

@@ -24,7 +24,10 @@ class TrainTrackPath {
 
   /// Position + tangent angle at fraction [t] (0..1) along the path.
   static ({Offset position, double angle}) sample(Size size, double t) {
-    final metrics = build(size).computeMetrics();
+    if (size.width <= 0 || size.height <= 0) {
+      return (position: Offset.zero, angle: 0.0);
+    }
+    final metrics = build(size).computeMetrics().toList();
     if (metrics.isEmpty) return (position: Offset.zero, angle: 0.0);
     final metric = metrics.first;
     final clampedT = t.clamp(0.0, 1.0);
@@ -46,8 +49,11 @@ class ProgressPathPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
     final path = TrainTrackPath.build(size);
-    final metric = path.computeMetrics().first;
+    final metrics = path.computeMetrics().toList();
+    if (metrics.isEmpty) return;
+    final metric = metrics.first;
     final len = metric.length;
     final travelLen = len * progress.clamp(0.0, 1.0);
 
@@ -101,8 +107,12 @@ class ProgressPathPainter extends CustomPainter {
     }
 
     // 4. Endpoint markers.
-    final start = metric.getTangentForOffset(0)!.position;
-    final end = metric.getTangentForOffset(len)!.position;
+    final startTangent = metric.getTangentForOffset(0);
+    final endTangent = metric.getTangentForOffset(len);
+    if (startTangent == null || endTangent == null) return;
+
+    final start = startTangent.position;
+    final end = endTangent.position;
 
     // Origin: solid filled dot.
     canvas.drawCircle(

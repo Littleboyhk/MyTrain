@@ -68,8 +68,8 @@ class TrackingController extends Notifier<TrackingState> {
 
   Timer? _poll;
 
-  /// Live status refresh cadence (server-side cache makes this cheap).
-  static const Duration _livePoll = Duration(minutes: 4);
+  /// Live status refresh cadence (optimized 30s polling for Enterprise tier).
+  static const Duration _livePoll = Duration(seconds: 30);
 
   /// The journey key the offline tracker is filed under.
   OfflineTrackingKey get _offlineKey =>
@@ -427,18 +427,15 @@ class TrackingController extends Notifier<TrackingState> {
         return;
       }
 
-      // Keep showing the REAL route; just mark it as not live so the badge
-      // reads OFFLINE. (We deliberately don't switch to the "signal lost"
-      // empty state — the verified route is still worth showing.)
+      // Calculate real schedule-based position from wall-clock time
+      final scheduledPos = _estimateSchedulePosition(
+        journey,
+        delayMinutes: live?.delayMinutes ?? 0,
+      );
+
       state = TrackingReady(
         journey: journey,
-        position: LivePosition(
-          fromIndex: 0,
-          segmentProgress: 0,
-          status: DelayStatus.onTime,
-          delayMinutes: 0,
-          updatedAt: DateTime.now(),
-        ),
+        position: scheduledPos,
         live: false,
         source: PositionSource.scheduleOnly,
         lastSyncedAt: syncedAt,
@@ -447,7 +444,7 @@ class TrackingController extends Notifier<TrackingState> {
     }
 
     // Map the reported station code onto the real route index.
-    var index = 0;
+    int index = -1;
     final code = live.currentStationCode?.toUpperCase();
     if (code != null) {
       final i = journey.stations
@@ -455,20 +452,91 @@ class TrackingController extends Notifier<TrackingState> {
       if (i >= 0) index = i;
     }
 
+    final resolvedPos = index >= 0
+        ? LivePosition(
+            fromIndex: index.clamp(0, journey.stations.length - 1),
+            segmentProgress: 0,
+            status: live.delayMinutes > 0
+                ? DelayStatus.delayed
+                : DelayStatus.onTime,
+            delayMinutes: live.delayMinutes,
+            updatedAt: DateTime.now(),
+          )
+        : _estimateSchedulePosition(
+            journey,
+            delayMinutes: live.delayMinutes,
+          );
+
     state = TrackingReady(
       journey: _withStationStatus(journey, live),
-      position: LivePosition(
-        fromIndex: index.clamp(0, journey.stations.length - 1),
-        segmentProgress: 0,
-        status: live.delayMinutes > 0
-            ? DelayStatus.delayed
-            : DelayStatus.onTime,
-        delayMinutes: live.delayMinutes,
-        updatedAt: DateTime.now(),
-      ),
+      position: resolvedPos,
       live: true, // confirmed real running status
       source: PositionSource.liveApi,
       lastSyncedAt: syncedAt,
+    );
+  }
+
+  /// Estimates the train's current station and segment progress from scheduled
+  /// departure/arrival times against the current wall-clock time.
+  LivePosition _estimateSchedulePosition(
+    Journey journey, {
+    int delayMinutes = 0,
+  }) {
+    final stations = journey.stations;
+    if (stations.isEmpty) {
+      return LivePosition(
+        fromIndex: 0,
+        segmentProgress: 0,
+        status: DelayStatus.onTime,
+        delayMinutes: 0,
+        updatedAt: DateTime.now(),
+      );
+    }
+
+    final now = DateTime.now();
+    int fromIdx = 0;
+    double progress = 0.0;
+
+    for (int i = 0; i < stations.length; i++) {
+      final s = stations[i];
+      final dep = s.scheduledDeparture ?? s.scheduledArrival;
+      if (dep == null) continue;
+
+      final adjustedDep = dep.add(Duration(minutes: delayMinutes));
+      if (now.isAfter(adjustedDep) || now.isAtSameMomentAs(adjustedDep)) {
+        fromIdx = i;
+      } else {
+        break;
+      }
+    }
+
+    if (fromIdx < stations.length - 1) {
+      final currentStn = stations[fromIdx];
+      final nextStn = stations[fromIdx + 1];
+
+      final startTime = (currentStn.scheduledDeparture ?? currentStn.scheduledArrival)
+          ?.add(Duration(minutes: delayMinutes));
+      final endTime = (nextStn.scheduledArrival ?? nextStn.scheduledDeparture)
+          ?.add(Duration(minutes: delayMinutes));
+
+      if (startTime != null && endTime != null && endTime.isAfter(startTime)) {
+        final totalMs = endTime.difference(startTime).inMilliseconds;
+        final elapsedMs = now.difference(startTime).inMilliseconds;
+        if (totalMs > 0) {
+          progress = (elapsedMs / totalMs).clamp(0.0, 1.0);
+        }
+      }
+    } else {
+      fromIdx = stations.length - 1;
+      progress = 1.0;
+    }
+
+    return LivePosition(
+      fromIndex: fromIdx,
+      segmentProgress: progress,
+      status: delayMinutes > 0 ? DelayStatus.delayed : DelayStatus.onTime,
+      delayMinutes: delayMinutes,
+      updatedAt: DateTime.now(),
     );
   }
 

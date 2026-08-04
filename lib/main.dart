@@ -10,6 +10,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'config/supabase_config.dart';
 import 'data/app_settings_controller.dart';
 import 'data/language_controller.dart';
+import 'data/station_coords.dart';
 import 'data/theme_controller.dart';
 import 'l10n/app_localizations.dart';
 import 'screens/home_screen.dart';
@@ -34,6 +35,9 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('[dotenv] .env file not found or failed to load: $e');
   }
+
+  // Pre-warm 8,697 station coordinates in background for instant map rendering
+  StationCoords.tryLoad();
 
   if (SupabaseConfig.isConfigured) {
     await Supabase.initialize(

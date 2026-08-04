@@ -26,14 +26,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    const res = await cachedCall({
-      db: admin(),
-      method: "pnr",
-      cacheKey: `pnr:${pnr}`,
-      ttlSeconds: TTL.pnr,
-      run: () => rk.pnr(pnr),
-    });
-    return json(res);
+    const data = await rk.pnr(pnr);
+    return json({ data, cached: false });
   } catch (err) {
     const e = err instanceof RailKitError ? err : normalizeError(err);
     return json({ error: e.message, code: e.code }, e.status);

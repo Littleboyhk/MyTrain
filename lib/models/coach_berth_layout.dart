@@ -67,15 +67,12 @@ class CoachBerthLayout {
       supported = {
     CoachType.sleeper: (code: 'SL', name: 'Sleeper', lhbBerths: 80),
     CoachType.ac3: (code: '3A', name: 'AC 3-Tier', lhbBerths: 72),
+    CoachType.ac3Economy: (code: '3E', name: 'AC 3-Tier Economy', lhbBerths: 80),
+    CoachType.ac2: (code: '2A', name: 'AC 2-Tier', lhbBerths: 54),
   };
 
-  /// Coach codes the grid may be drawn for: `S` or `B` followed by digits.
-  ///
-  /// Belt and braces over the type check. The legend resolves by letter prefix,
-  /// so requiring the shape here means an exact-map code that happened to share a
-  /// type could never slip a grid onto a vehicle that is not a numbered
-  /// passenger coach.
-  static final RegExp _drawableCode = RegExp(r'^[SB]\d+$');
+  /// Coach codes the grid may be drawn for: `S`, `B`, `M`, `G`, `A`, `H` followed by digits.
+  static final RegExp _drawableCode = RegExp(r'^[SBMGAH]\d+$', caseSensitive: false);
 
   /// Train names that rule the standard cycle out regardless of coach code.
   ///

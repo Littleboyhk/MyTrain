@@ -48,6 +48,8 @@ dependencies:
   google_fonts: ^8.2.0
   connectivity_plus: ^7.3.1
   audioplayers: ^6.8.1
+  flutter_map: ^8.3.1
+  latlong2: ^0.10.1
 
 dev_dependencies:
   flutter_test:
@@ -81,6 +83,7 @@ flutter:
     # stations.json (which ships without geometry). 222 KB, 8,697 of 8,989
     # codes (96.8%); loaded lazily on first use, never at launch.
     - assets/data/station_coords.json
+    - assets/data/junction_corridors.json
     - assets/branding/
     - .env
 

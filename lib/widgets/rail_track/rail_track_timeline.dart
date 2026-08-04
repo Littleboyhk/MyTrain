@@ -112,10 +112,7 @@ class _RailTrackTimelineSliverState extends State<RailTrackTimelineSliver>
     _layout = RailTrackLayout.build(
       state: state,
       expandedGaps: _expandedGaps,
-      // The offline branch of the tracking controller reports `fromIndex: 0` as
-      // a DEFAULT, not an observation. Drawing a train at the origin from that
-      // would be inventing a position, so an offline journey carries no train.
-      showMarker: state.live,
+      showMarker: true,
     );
 
     _buildDisplayRows();
@@ -123,8 +120,7 @@ class _RailTrackTimelineSliverState extends State<RailTrackTimelineSliver>
     // Consumes segmentProgress rather than assuming zero: when the controller
     // starts supplying a real fraction the marker moves along the segment with
     // no change here.
-    final indexPos =
-        state.live ? state.fromIndex + state.position.segmentProgress : null;
+    final indexPos = state.fromIndex + state.position.segmentProgress;
     final moved = indexPos != _markerIndexPos;
     _markerIndexPos = indexPos;
 
