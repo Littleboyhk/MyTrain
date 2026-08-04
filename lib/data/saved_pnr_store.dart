@@ -85,9 +85,11 @@ class SavedPnrStore {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_key);
       if (raw == null || raw.trim().isEmpty) {
-        final initial = [_defaultGaribRath()];
-        await savePnr(initial.first);
-        return initial;
+        // Seed a default ticket — write directly to prefs to avoid recursion
+        // (savePnr calls getSavedPnrs internally).
+        final initial = _defaultGaribRath();
+        await prefs.setString(_key, jsonEncode([_toJson(initial)]));
+        return [initial];
       }
 
       final List decoded = jsonDecode(raw);
@@ -99,9 +101,9 @@ class SavedPnrStore {
         }
       }
       if (out.isEmpty) {
-        final initial = [_defaultGaribRath()];
-        await savePnr(initial.first);
-        return initial;
+        final initial = _defaultGaribRath();
+        await prefs.setString(_key, jsonEncode([_toJson(initial)]));
+        return [initial];
       }
       return out;
     } catch (e) {
