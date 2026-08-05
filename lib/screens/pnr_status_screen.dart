@@ -98,13 +98,6 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
     });
   }
 
-  void _fillSample(String pnr) {
-    Haptics.selection();
-    _controller.text = pnr;
-    _controller.selection = TextSelection.collapsed(offset: pnr.length);
-    _submit();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -131,7 +124,6 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
                     isValid: _isValid,
                     length: _pnr.length,
                     onSubmit: _submit,
-                    onSample: _fillSample,
                   ),
                   const SizedBox(height: 16),
                   _SavedTicketsSection(
@@ -222,7 +214,6 @@ class _InputCard extends StatelessWidget {
     required this.isValid,
     required this.length,
     required this.onSubmit,
-    required this.onSample,
   });
 
   final TextEditingController controller;
@@ -230,7 +221,6 @@ class _InputCard extends StatelessWidget {
   final bool isValid;
   final int length;
   final VoidCallback onSubmit;
-  final ValueChanged<String> onSample;
 
   @override
   Widget build(BuildContext context) {
@@ -370,74 +360,7 @@ class _InputCard extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 18),
-          Text('TRY A SAMPLE', style: AppText.overline.copyWith(fontSize: 9.5)),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final s in PnrService.samples)
-                _SampleChip(
-                  label: s.label,
-                  color: _sampleColor(s.label),
-                  onTap: () => onSample(s.pnr),
-                ),
-            ],
-          ),
         ],
-      ),
-    );
-  }
-
-  Color _sampleColor(String label) => switch (label) {
-        'Confirmed' => AppColors.onTime,
-        'Waitlisted' => AppColors.cancelled,
-        _ => AppColors.accentViolet,
-      };
-}
-
-class _SampleChip extends StatelessWidget {
-  const _SampleChip({
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: GlassSurface(
-        radius: 999,
-        blur: 0,
-        pill: true,
-        compact: true,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: AppText.label.copyWith(
-                color: AppColors.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1519,84 +1442,111 @@ class _SavedTicketCard extends StatelessWidget {
     final status = firstPassenger.current.status;
     final pillText = firstPassenger.current.display;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: GlassSurface(
-        radius: 16,
-        strong: true,
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  'PNR ${result.pnr}',
-                  style: TextStyle(
-                    color: g.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: status.color.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: status.color.withValues(alpha: 0.6),
-                      width: 1.2,
-                    ),
-                  ),
-                  child: Text(
-                    pillText,
-                    style: TextStyle(
-                      color: status.color,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '${result.train.number} · ${result.train.name}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: g.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Text(
-                  '${result.train.fromCode} ➔ ${result.train.toCode}',
-                  style: TextStyle(
-                    color: g.textMuted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                if (result.travelClass != null)
+    return Dismissible(
+      key: Key('saved_pnr_${result.pnr}'),
+      direction: DismissDirection.endToStart,
+      onDismissed: (_) => onDelete(),
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: Colors.redAccent.withValues(alpha: 0.25),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 22),
+      ),
+      child: GestureDetector(
+        onTap: onTap,
+        child: GlassSurface(
+          radius: 16,
+          strong: true,
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
                   Text(
-                    result.travelClass!,
-                    style: const TextStyle(
-                      color: GlassTheme.accentBlue,
-                      fontSize: 12,
+                    'PNR ${result.pnr}',
+                    style: TextStyle(
+                      color: g.textPrimary,
+                      fontSize: 14,
                       fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
                     ),
                   ),
-              ],
-            ),
-          ],
+                  const Spacer(),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: status.color.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: status.color.withValues(alpha: 0.6),
+                        width: 1.2,
+                      ),
+                    ),
+                    child: Text(
+                      pillText,
+                      style: TextStyle(
+                        color: status.color,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onDelete,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.delete_outline_rounded,
+                        size: 18,
+                        color: g.textMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '${result.train.number} · ${result.train.name}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: g.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(
+                    '${result.train.fromCode} ➔ ${result.train.toCode}',
+                    style: TextStyle(
+                      color: g.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (result.travelClass != null)
+                    Text(
+                      result.travelClass!,
+                      style: const TextStyle(
+                        color: GlassTheme.accentBlue,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

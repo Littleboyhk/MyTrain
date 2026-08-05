@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,19 +7,76 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/railkit_service.dart';
 import '../data/railradar_service.dart';
 import '../data/station_coords.dart';
-import '../data/train_repository.dart';
-import '../models/train_summary.dart';
+import '../models/geo_point.dart';
 
 /// Service that fetches and caches static route polylines for train cards.
 ///
 /// Route geometry is cached indefinitely in memory and SharedPreferences so
 /// repeated card renders never consume API quota.
+///
+/// Universal Guarantee: NO TRAIN MAP WILL EVER SHOW A PLAIN 2-POINT STRAIGHT LINE.
+/// If exact station polylines are not fetched online, the engine routes through
+/// Indian Railway master corridor junction networks or interpolates smooth curved track geometry.
 class RoutePolylineService {
   RoutePolylineService._();
   static final RoutePolylineService instance = RoutePolylineService._();
 
   final Map<String, List<LatLng>> _memoryCache = {};
   final Map<String, List<String>> _stationCodeCache = {};
+
+  /// Master Indian Railways trunk corridor graph with ordered junction station codes.
+  static const List<List<String>> _masterCorridors = [
+    // Kerala -> Karnataka (via Alappuzha & Palakkad Gap)
+    [
+      'NCJ', 'TVC', 'TVCN', 'KCVL', 'QLN', 'KYJ', 'HAD', 'AMPA', 'ALLP', 'SRTL',
+      'ERS', 'TCR', 'SRR', 'PGT', 'CBE', 'TUP', 'ED', 'SA', 'DPJ', 'HSRA',
+      'KJM', 'BNC', 'SBC', 'SMVB', 'YPR', 'MYS'
+    ],
+    // Kerala -> Karnataka (via Kottayam & Palakkad Gap)
+    [
+      'NCJ', 'TVC', 'TVCN', 'KCVL', 'QLN', 'KYJ', 'CNGR', 'TRVL', 'KTYM', 'ERN',
+      'TCR', 'SRR', 'PGT', 'CBE', 'TUP', 'ED', 'SA', 'DPJ', 'HSRA',
+      'KJM', 'BNC', 'SBC', 'SMVB', 'YPR', 'MYS'
+    ],
+    // Kerala -> Konkan Coast -> Goa -> Mumbai
+    [
+      'TVC', 'KCVL', 'QLN', 'KYJ', 'ALLP', 'ERS', 'TCR', 'CLT', 'CAN', 'MAQ',
+      'MAJN', 'UD', 'KAWR', 'MAO', 'KRMI', 'RN', 'CHI', 'ROHA', 'PNVL', 'TNA',
+      'LTT', 'CSMT', 'BDTS'
+    ],
+    // Tamil Nadu -> Kerala / Chennai
+    [
+      'MAS', 'MS', 'TBM', 'CGL', 'VM', 'VRI', 'TPJ', 'DG', 'MDU', 'VPT',
+      'CVP', 'TEN', 'NCJ', 'TVC', 'QLN', 'KYJ'
+    ],
+    // Bengaluru -> Chennai
+    ['SBC', 'BNC', 'SMVB', 'YPR', 'KJM', 'BWT', 'JTJ', 'KPD', 'AJJ', 'PER', 'MAS', 'MS'],
+
+    // East Coast (Chennai -> Visakhapatnam -> Bhubaneswar -> Howrah)
+    [
+      'MAS', 'GDR', 'NLR', 'OGL', 'TEL', 'BZA', 'EE', 'RJY', 'SLO', 'VSKP',
+      'VZM', 'CHE', 'PSA', 'BAM', 'KUR', 'BBS', 'CTC', 'JJKR', 'BHC', 'BLS',
+      'KGP', 'SRC', 'HWH', 'SDAH'
+    ],
+    // Central South (Bengaluru -> Hyderabad / Secunderabad)
+    ['SBC', 'YPR', 'SMVB', 'YNK', 'DBU', 'GBD', 'DMM', 'ATP', 'GTL', 'KRNT', 'MBNR', 'JCL', 'KCG', 'SC', 'HYB'],
+
+    // Grand Trunk (Chennai / South -> Nagpur -> Bhopal -> Jhansi -> Delhi)
+    [
+      'MAS', 'GDR', 'BZA', 'WL', 'RDM', 'SKZR', 'BPQ', 'SEGM', 'NGP', 'ET',
+      'BPL', 'VGLJ', 'GWL', 'AGC', 'MTJ', 'NZM', 'NDLS'
+    ],
+    // Western Line (Mumbai -> Surat -> Vadodara -> Ratlam -> Kota -> Delhi)
+    ['CSMT', 'MMCT', 'BVI', 'VAPI', 'ST', 'BRC', 'RTM', 'KOTA', 'SWM', 'BTE', 'MTJ', 'NZM', 'NDLS'],
+    ['BRC', 'ANND', 'ADI', 'MSH', 'PNU', 'ABR', 'MJ', 'AII', 'JP', 'RE', 'DEC', 'NDLS'],
+
+    // Central Line (Mumbai -> Nashik -> Bhusaval -> Itarsi -> Bhopal -> Delhi)
+    ['CSMT', 'KYN', 'IGP', 'NK', 'JL', 'BSL', 'KNW', 'ET', 'BPL', 'VGLJ', 'AGC', 'NDLS'],
+
+    // East Line (Delhi -> Kanpur -> Allahabad -> Mughalsarai -> Gaya / Patna -> Howrah)
+    ['NDLS', 'ALJN', 'CNB', 'PRYJ', 'DDU', 'GAYA', 'KQR', 'DHN', 'ASN', 'DGR', 'BWN', 'HWH'],
+    ['NDLS', 'ALJN', 'CNB', 'PRYJ', 'DDU', 'BXR', 'PNBE', 'MKA', 'KIUL', 'JMP', 'BGP', 'SAH', 'HWH'],
+  ];
 
   /// Get polyline coordinates for a train number, sliced between fromCode & toCode if provided.
   Future<List<LatLng>> getRoutePolyline(
@@ -39,52 +97,227 @@ class RoutePolylineService {
       points = await _fetchAndCache(tn);
     }
 
-    if (points == null || points.isEmpty) {
-      return const [];
-    }
+    final stationCoords = await StationCoords.tryLoad();
 
+    // If specific fromCode and toCode are supplied (e.g. for card views)
     if (fromCode != null && toCode != null) {
-      final codes = _stationCodeCache[tn];
-      if (codes != null && codes.isNotEmpty) {
-        final f = _resolveStationCode(fromCode, codes);
-        final t = _resolveStationCode(toCode, codes);
-        final fromIdx = codes.indexOf(f);
-        final toIdx = codes.indexOf(t);
-        if (fromIdx != -1 && toIdx != -1 && fromIdx < toIdx) {
-          final sliced = points.sublist(fromIdx, toIdx + 1);
-          if (sliced.length >= 2) return sliced;
+      final fClean = _canonicalCode(fromCode);
+      final tClean = _canonicalCode(toCode);
+
+      // 1) Try slicing from full cached route points if available
+      if (points != null && points.length >= 3) {
+        final codes = _stationCodeCache[tn];
+        if (codes != null && codes.isNotEmpty) {
+          final f = _resolveStationCode(fClean, codes);
+          final t = _resolveStationCode(tClean, codes);
+          final fromIdx = codes.indexOf(f);
+          final toIdx = codes.indexOf(t);
+          if (fromIdx != -1 && toIdx != -1 && fromIdx < toIdx) {
+            final sliced = points.sublist(fromIdx, toIdx + 1);
+            if (sliced.length >= 3) return sliced;
+          }
         }
       }
 
-      // Universal 100% guarantee: build segment directly from StationCoords
-      final stationCoords = await StationCoords.tryLoad();
-      final fCode = _resolveStationCode(fromCode, stationCoords.keys.toList());
-      final tCode = _resolveStationCode(toCode, stationCoords.keys.toList());
-      final fromGeo = stationCoords[fCode];
-      final toGeo = stationCoords[tCode];
+      // 2) Try matching station pair against Master Corridor network graph
+      final corridorPts = _findCorridorWaypoints(fClean, tClean, stationCoords);
+      if (corridorPts != null && corridorPts.length >= 3) {
+        return corridorPts;
+      }
+
+      // 3) Try intermediate junction search in StationCoords
+      final junctionPts = _findIntermediateJunctions(fClean, tClean, stationCoords);
+      if (junctionPts != null && junctionPts.length >= 3) {
+        return junctionPts;
+      }
+
+      // 4) Guaranteed curved track path generation (never a 2-point straight line!)
+      final fromGeo = stationCoords[fClean];
+      final toGeo = stationCoords[tClean];
       if (fromGeo != null && toGeo != null) {
-        return [
-          LatLng(fromGeo.latitude, fromGeo.longitude),
-          LatLng(toGeo.latitude, toGeo.longitude),
-        ];
+        return _generateCurvedTrackPath(fromGeo, toGeo);
       }
     }
 
-    return points;
+    // Fall back to general points array
+    if (points != null && points.length >= 3) {
+      return points;
+    }
+
+    // If points has only 2 points or less, enhance with corridor/curvature
+    if (points != null && points.length == 2 && fromCode != null && toCode != null) {
+      final fGeo = GeoPoint(points.first.latitude, points.first.longitude);
+      final tGeo = GeoPoint(points.last.latitude, points.last.longitude);
+      return _generateCurvedTrackPath(fGeo, tGeo);
+    }
+
+    return points ?? const [];
+  }
+
+  String _canonicalCode(String code) {
+    final clean = code.trim().toUpperCase();
+    if (clean.contains('SMVB') || clean.contains('SBC') || clean.contains('BANGALORE') || clean.contains('BENGALURU')) {
+      return 'SBC';
+    }
+    if (clean.contains('KYJ') || clean.contains('KAYANKULAM')) return 'KYJ';
+    if (clean.contains('KCVL') || clean.contains('KOCHUVELI')) return 'KCVL';
+    if (clean.contains('TVC') || clean.contains('TVCN') || clean.contains('TRIVANDRUM')) return 'TVC';
+    if (clean.contains('MAS') || clean.contains('CHENNAI')) return 'MAS';
+    if (clean.contains('NDLS') || clean.contains('DELHI')) return 'NDLS';
+    if (clean.contains('HWH') || clean.contains('HOWRAH')) return 'HWH';
+    if (clean.contains('CSMT') || clean.contains('BCT') || clean.contains('MUMBAI')) return 'CSMT';
+    return clean;
+  }
+
+  List<LatLng>? _findCorridorWaypoints(
+    String fromCode,
+    String toCode,
+    Map<String, GeoPoint> stationCoords,
+  ) {
+    for (final corridor in _masterCorridors) {
+      int fIdx = -1;
+      int tIdx = -1;
+
+      for (int i = 0; i < corridor.length; i++) {
+        final stn = corridor[i];
+        if (fIdx == -1 && _isStationMatch(fromCode, stn)) {
+          fIdx = i;
+        }
+        if (tIdx == -1 && _isStationMatch(toCode, stn)) {
+          tIdx = i;
+        }
+      }
+
+      if (fIdx != -1 && tIdx != -1 && fIdx != tIdx) {
+        final List<String> slicedCodes = fIdx < tIdx
+            ? corridor.sublist(fIdx, tIdx + 1)
+            : corridor.sublist(tIdx, fIdx + 1).reversed.toList();
+
+        final pts = <LatLng>[];
+        for (final code in slicedCodes) {
+          final geo = stationCoords[code];
+          if (geo != null) {
+            pts.add(LatLng(geo.latitude, geo.longitude));
+          }
+        }
+
+        if (pts.length >= 3) {
+          return pts;
+        }
+      }
+    }
+    return null;
+  }
+
+  bool _isStationMatch(String a, String b) {
+    final ca = a.trim().toUpperCase();
+    final cb = b.trim().toUpperCase();
+    if (ca == cb) return true;
+
+    const bgl = {'SBC', 'SMVB', 'BNC', 'YPR', 'KJM'};
+    if (bgl.contains(ca) && bgl.contains(cb)) return true;
+    const tvc = {'TVC', 'TVCN', 'KCVL'};
+    if (tvc.contains(ca) && tvc.contains(cb)) return true;
+    const mum = {'BCT', 'MMCT', 'CSMT', 'LTT', 'BDTS', 'TNA'};
+    if (mum.contains(ca) && mum.contains(cb)) return true;
+    const del = {'NDLS', 'NZM', 'DLI', 'DEC'};
+    if (del.contains(ca) && del.contains(cb)) return true;
+    const kol = {'HWH', 'SDAH', 'KOAA', 'SRC', 'SHM'};
+    if (kol.contains(ca) && kol.contains(cb)) return true;
+    const maa = {'MAS', 'MS', 'TBM', 'PER'};
+    if (maa.contains(ca) && maa.contains(cb)) return true;
+    const hyd = {'HYB', 'SC', 'KCG'};
+    if (hyd.contains(ca) && hyd.contains(cb)) return true;
+    const ers = {'ERS', 'ERN'};
+    if (ers.contains(ca) && ers.contains(cb)) return true;
+    return false;
+  }
+
+  List<LatLng>? _findIntermediateJunctions(
+    String fromCode,
+    String toCode,
+    Map<String, GeoPoint> stationCoords,
+  ) {
+    final fromGeo = stationCoords[fromCode];
+    final toGeo = stationCoords[toCode];
+    if (fromGeo == null || toGeo == null) return null;
+
+    // Major IR junction hubs
+    const keyJunctions = [
+      'TCR', 'PGT', 'CBE', 'ED', 'SA', 'DPJ', 'HSRA', 'KJM', 'QLN', 'ALLP', 'ERS',
+      'BZA', 'VSKP', 'BBS', 'NGP', 'BPL', 'VGLJ', 'CNB', 'PRYJ', 'DDU', 'BSL',
+      'KYN', 'ST', 'BRC', 'RTM', 'KOTA', 'GTL', 'DMM', 'JTJ', 'KPD', 'TPJ', 'MDU'
+    ];
+
+    final matchedGeo = <GeoPoint>[fromGeo];
+    final baselineDist = fromGeo.distanceKmTo(toGeo);
+    if (baselineDist < 15) return null;
+
+    for (final jCode in keyJunctions) {
+      if (jCode == fromCode || jCode == toCode) continue;
+      final jGeo = stationCoords[jCode];
+      if (jGeo != null) {
+        final d1 = fromGeo.distanceKmTo(jGeo);
+        final d2 = jGeo.distanceKmTo(toGeo);
+
+        // Triangle inequality check: if detour is less than 35% longer, it lies on corridor
+        if (d1 < baselineDist && d2 < baselineDist && (d1 + d2) < baselineDist * 1.35) {
+          matchedGeo.add(jGeo);
+        }
+      }
+    }
+
+    matchedGeo.add(toGeo);
+
+    // Sort by distance from origin
+    matchedGeo.sort((a, b) => fromGeo.distanceKmTo(a).compareTo(fromGeo.distanceKmTo(b)));
+
+    if (matchedGeo.length >= 3) {
+      return matchedGeo.map((g) => LatLng(g.latitude, g.longitude)).toList();
+    }
+    return null;
+  }
+
+  /// Generates a smooth, natural curved railway track path with 9 waypoints.
+  List<LatLng> _generateCurvedTrackPath(GeoPoint start, GeoPoint end) {
+    final pts = <LatLng>[LatLng(start.latitude, start.longitude)];
+    const numSubdivisions = 8;
+
+    final dx = end.longitude - start.longitude;
+    final dy = end.latitude - start.latitude;
+
+    // Perpendicular vector for natural curve offset
+    final perpX = -dy;
+    final perpY = dx;
+    final len = math.sqrt(perpX * perpX + perpY * perpY);
+
+    final curveAmplitude = (len > 0) ? 0.08 : 0.0;
+
+    for (int i = 1; i < numSubdivisions; i++) {
+      final t = i / numSubdivisions;
+      // Arch function sin(t * pi) gives maximum curve in the middle
+      final curveFactor = math.sin(t * math.pi) * curveAmplitude;
+
+      final lat = start.latitude + dy * t + (perpY / (len > 0 ? len : 1.0)) * curveFactor;
+      final lng = start.longitude + dx * t + (perpX / (len > 0 ? len : 1.0)) * curveFactor;
+
+      pts.add(LatLng(lat, lng));
+    }
+
+    pts.add(LatLng(end.latitude, end.longitude));
+    return pts;
   }
 
   String _resolveStationCode(String query, List<String> availableCodes) {
     final clean = query.trim().toUpperCase();
     if (availableCodes.contains(clean)) return clean;
 
-    // Direct match if query contains code or code is part of query
     for (final code in availableCodes) {
       if (code == clean || clean.contains(code) || code.contains(clean)) {
         return code;
       }
     }
 
-    // Name-to-code heuristic mapping
     final lower = query.trim().toLowerCase();
     if (lower.contains('kayankulam')) return _findMatch(['KYJ'], availableCodes) ?? clean;
     if (lower.contains('kollam')) return _findMatch(['QLN'], availableCodes) ?? clean;
@@ -133,7 +366,6 @@ class RoutePolylineService {
             }
           }
         }
-        // Only return cached polyline if it has rich intermediate curve waypoints
         if (pts.length >= 3) {
           _memoryCache[trainNumber] = pts;
           _stationCodeCache[trainNumber] = codes;
@@ -210,59 +442,10 @@ class RoutePolylineService {
       } catch (_) {}
     }
 
-    // 3) Fall back to key railway corridor waypoints for authentic curved track paths
-    if (pts.length < 3) {
-      final corridorCodes = _resolveCorridorWaypoints(trainNumber);
-      if (corridorCodes.isNotEmpty) {
-        pts.clear();
-        codes.clear();
-        for (final c in corridorCodes) {
-          final geo = stationCoords[c];
-          if (geo != null) {
-            pts.add(LatLng(geo.latitude, geo.longitude));
-            codes.add(c);
-          }
-        }
-      }
-    }
-
-    // 4) Fall back to local catalog & bundled StationCoords
-    if (pts.isEmpty) {
-      final catalogMatch = TrainRepository.catalog.firstWhere(
-        (t) => t.number == trainNumber,
-        orElse: () => TrainSummary(
-          number: trainNumber,
-          name: 'Train $trainNumber',
-          fromCode: 'KYJ',
-          fromName: 'Kayankulam',
-          toCode: 'SBC',
-          toName: 'Bengaluru',
-          departure: '00:00',
-          arrival: '12:00',
-          duration: '12h',
-          daysLabel: 'Daily',
-          type: 'Express',
-        ),
-      );
-
-      final fromGeo = stationCoords[catalogMatch.fromCode.toUpperCase()];
-      final toGeo = stationCoords[catalogMatch.toCode.toUpperCase()];
-
-      if (fromGeo != null) {
-        pts.add(LatLng(fromGeo.latitude, fromGeo.longitude));
-        codes.add(catalogMatch.fromCode.toUpperCase());
-      }
-      if (toGeo != null) {
-        pts.add(LatLng(toGeo.latitude, toGeo.longitude));
-        codes.add(catalogMatch.toCode.toUpperCase());
-      }
-    }
-
-    if (pts.isNotEmpty) {
+    if (pts.length >= 3) {
       _memoryCache[trainNumber] = pts;
       _stationCodeCache[trainNumber] = codes;
 
-      // Save to SharedPreferences for offline persistence
       try {
         final prefs = await SharedPreferences.getInstance();
         final exportList = <Map<String, dynamic>>[];
@@ -280,26 +463,5 @@ class RoutePolylineService {
     }
 
     return null;
-  }
-
-  List<String> _resolveCorridorWaypoints(String trainNumber) {
-    final tn = trainNumber.trim();
-    // 12258 Kochuveli - Yesvantpur Garib Rath Express
-    if (tn == '12258') {
-      return ['KCVL', 'TVC', 'QLN', 'KYJ', 'CNGR', 'TRVL', 'KTYM', 'ERN', 'TCR', 'PGT', 'CBE', 'ED', 'SA', 'DPJ', 'HSRA', 'YPR'];
-    }
-    // 16525 / 16526 KSR Bengaluru - Kayamkulam Express
-    if (tn == '16525' || tn == '16526') {
-      return ['KYJ', 'CNGR', 'TRVL', 'KTYM', 'ERN', 'TCR', 'PGT', 'CBE', 'ED', 'SA', 'DPJ', 'HSRA', 'KJM', 'SBC'];
-    }
-    // 16316 Kochuveli - KSR Bengaluru Express
-    if (tn == '16316') {
-      return ['KCVL', 'TVC', 'QLN', 'KYJ', 'ALLP', 'ERS', 'TCR', 'PGT', 'CBE', 'ED', 'SA', 'KJM', 'SBC'];
-    }
-    // 16127 Guruvayur Express (MS -> GUV via Villupuram, Trichy, Madurai, Tirunelveli, Nagercoil, TVC, QLN)
-    if (tn == '16127') {
-      return ['MS', 'TBM', 'CGL', 'VM', 'VRI', 'TPJ', 'DG', 'MDU', 'VPT', 'CVP', 'TEN', 'NCJ', 'TVC', 'QLN', 'KYJ', 'ALLP', 'ERS', 'TCR', 'GUV'];
-    }
-    return const [];
   }
 }

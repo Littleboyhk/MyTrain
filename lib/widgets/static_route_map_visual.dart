@@ -138,95 +138,99 @@ class _StaticRouteMapVisualState extends State<StaticRouteMapVisual>
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(15),
-          child: Stack(
-            children: [
-              FlutterMap(
-                options: MapOptions(
-                  initialCameraFit: CameraFit.bounds(
-                    bounds: bounds,
-                    padding: const EdgeInsets.all(12),
-                    maxZoom: 8, // Cap zoom to reduce tile count on mobile
+          child: Container(
+            color: const Color(0xFF131C27),
+            child: Stack(
+              children: [
+                FlutterMap(
+                  options: MapOptions(
+                    initialCameraFit: CameraFit.bounds(
+                      bounds: bounds,
+                      padding: const EdgeInsets.all(16),
+                      maxZoom: 12,
+                    ),
+                    interactionOptions: const InteractionOptions(
+                      flags: InteractiveFlag.none,
+                    ),
                   ),
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.none,
-                  ),
-                ),
-                children: [
-                  // Rich Esri World Imagery Satellite / Terrain tiles
-                  TileLayer(
-                    urlTemplate:
-                        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                    userAgentPackageName: 'com.mytrain.app',
-                    maxZoom: 8, // Match camera cap — no over-fetching
-                    keepBuffer: 2,
-                    fallbackUrl:
-                        'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-                  ),
-                  // District Boundaries & Main Cities Overlay Layer
-                  // Only shown when explicitly requested (full-screen map)
-                  if (widget.showBoundaries)
+                  children: [
+                    // High-availability Satellite tiles with multi-subdomain distribution & dark fallback
                     TileLayer(
                       urlTemplate:
-                          'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                          'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                      subdomains: const ['0', '1', '2', '3'],
                       userAgentPackageName: 'com.mytrain.app',
-                      maxZoom: 8,
-                      keepBuffer: 2,
+                      maxZoom: 18,
+                      keepBuffer: 4,
+                      fallbackUrl:
+                          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                     ),
-                  // Polyline Layer: Black casing + Vibrant Red track line
-                  PolylineLayer(
-                    polylines: [
-                      // Outer black outline casing
-                      Polyline(
-                        points: points,
-                        strokeWidth: 6.5,
-                        color: Colors.black.withValues(alpha: 0.85),
+                    // District Boundaries & Main Cities Overlay Layer
+                    // Only shown when explicitly requested (full-screen map)
+                    if (widget.showBoundaries)
+                      TileLayer(
+                        urlTemplate:
+                            'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                        userAgentPackageName: 'com.mytrain.app',
+                        maxZoom: 18,
+                        keepBuffer: 3,
                       ),
-                      // Inner vibrant red track polyline
-                      Polyline(
-                        points: points,
-                        strokeWidth: 3.8,
-                        color: const Color(0xFFE53935),
-                      ),
-                    ],
-                  ),
-                  // Station Markers with Label Pills
-                  MarkerLayer(
-                    markers: [
-                      // Origin Marker (GREEN 🟢)
-                      _stationMarker(
-                        points.first,
-                        widget.fromCode?.toUpperCase() ?? 'ORIGIN',
-                        color: const Color(0xFF4CAF50),
-                      ),
-                      // Destination Marker (RED 🔴)
-                      _stationMarker(
-                        points.last,
-                        widget.toCode?.toUpperCase() ?? 'DEST',
-                        color: const Color(0xFFE53935),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              // Glass inner shadow gradient
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withValues(alpha: 0.20),
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.35),
-                        ],
+                    // Polyline Layer: Black casing + Vibrant Red track line
+                    PolylineLayer(
+                      polylines: [
+                        // Outer black outline casing
+                        Polyline(
+                          points: points,
+                          strokeWidth: 6.5,
+                          color: Colors.black.withValues(alpha: 0.85),
+                        ),
+                        // Inner vibrant red track polyline
+                        Polyline(
+                          points: points,
+                          strokeWidth: 3.8,
+                          color: const Color(0xFFE53935),
+                        ),
+                      ],
+                    ),
+                    // Station Markers with Label Pills
+                    MarkerLayer(
+                      markers: [
+                        // Origin Marker (GREEN 🟢)
+                        _stationMarker(
+                          points.first,
+                          widget.fromCode?.toUpperCase() ?? 'ORIGIN',
+                          color: const Color(0xFF4CAF50),
+                        ),
+                        // Destination Marker (RED 🔴)
+                        _stationMarker(
+                          points.last,
+                          widget.toCode?.toUpperCase() ?? 'DEST',
+                          color: const Color(0xFFE53935),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                // Glass inner shadow gradient
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: 0.20),
+                            Colors.transparent,
+                            Colors.black.withValues(alpha: 0.35),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

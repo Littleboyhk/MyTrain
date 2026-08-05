@@ -79,14 +79,13 @@ class SavedPnrStore {
     }
   }
 
-  /// Get all saved PNR tickets from storage.
+  /// Get all saved PNR tickets from storage, automatically pruning completed journey tickets 48h past journey date.
   Future<List<PnrResult>> getSavedPnrs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_key);
       if (raw == null || raw.trim().isEmpty) {
         // Seed a default ticket — write directly to prefs to avoid recursion
-        // (savePnr calls getSavedPnrs internally).
         final initial = _defaultGaribRath();
         await prefs.setString(_key, jsonEncode([_toJson(initial)]));
         return [initial];
@@ -94,17 +93,27 @@ class SavedPnrStore {
 
       final List decoded = jsonDecode(raw);
       final out = <PnrResult>[];
+      final now = DateTime.now();
+
       for (final item in decoded) {
         if (item is Map) {
           final parsed = _fromJson(item.cast<String, dynamic>());
-          if (parsed != null) out.add(parsed);
+          if (parsed != null) {
+            // Auto-remove tickets 48 hours after journey date completes
+            final jDate = parsed.journeyDate;
+            if (jDate != null && jDate.add(const Duration(hours: 48)).isBefore(now)) {
+              continue; // Expired past journey date — prune
+            }
+            out.add(parsed);
+          }
         }
       }
-      if (out.isEmpty) {
-        final initial = _defaultGaribRath();
-        await prefs.setString(_key, jsonEncode([_toJson(initial)]));
-        return [initial];
+
+      // Persist pruned list if any old tickets auto-expired
+      if (out.length != decoded.length) {
+        await prefs.setString(_key, jsonEncode(out.map(_toJson).toList()));
       }
+
       return out;
     } catch (e) {
       debugPrint('[SavedPnrStore] Error reading saved PNRs: $e');

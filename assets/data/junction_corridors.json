@@ -1,0 +1,49 @@
+{
+  "corridors": [
+    {
+      "id": "kerala_bangalore_chennai",
+      "name": "Kerala - Bangalore / Chennai Corridor",
+      "origins": ["TVC", "ERS", "CLT", "ALLP", "KTYM", "TCR"],
+      "destinations": ["SBC", "YPR", "MAS", "MS", "SMVB"],
+      "junctions": [
+        {"code": "CBE", "name": "Coimbatore Junction"},
+        {"code": "ED", "name": "Erode Junction"},
+        {"code": "SA", "name": "Salem Junction"},
+        {"code": "PGT", "name": "Palakkad Junction"}
+      ]
+    },
+    {
+      "id": "bangalore_chennai",
+      "name": "Bangalore - Chennai Corridor",
+      "origins": ["SBC", "YPR", "SMVB"],
+      "destinations": ["MAS", "MS", "TBM"],
+      "junctions": [
+        {"code": "JTJ", "name": "Jolarpettai Junction"},
+        {"code": "KPD", "name": "Katpadi Junction"},
+        {"code": "BWT", "name": "Bangarapet Junction"}
+      ]
+    },
+    {
+      "id": "hyderabad_bangalore",
+      "name": "Hyderabad - Bangalore Corridor",
+      "origins": ["HYB", "SC", "KCG"],
+      "destinations": ["SBC", "YPR", "SMVB"],
+      "junctions": [
+        {"code": "GTL", "name": "Guntakal Junction"},
+        {"code": "KRNT", "name": "Kurnool City"},
+        {"code": "DMM", "name": "Dharmavaram Junction"}
+      ]
+    },
+    {
+      "id": "mumbai_pune_bangalore",
+      "name": "Mumbai / Pune - Bangalore Corridor",
+      "origins": ["CSMT", "DR", "LTT", "PUNE"],
+      "destinations": ["SBC", "YPR", "SMVB"],
+      "junctions": [
+        {"code": "MRJ", "name": "Miraj Junction"},
+        {"code": "UBL", "name": "SSSSS Hubballi Junction"},
+        {"code": "UGR", "name": "Ugar Khurd"}
+      ]
+    }
+  ]
+}
