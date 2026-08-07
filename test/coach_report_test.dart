@@ -457,12 +457,17 @@ void main() {
     });
 
     testWidgets('an updated-ago line is shown', (tester) async {
+      // `now: _now`, NOT DateTime.now(). The report is stamped `_now - 8min` by
+      // the helper, so pairing it with the real wall clock made this a time bomb:
+      // fromReports drops anything older than kCoachReportWindow (6h), so the
+      // line vanished and this test began failing once real time passed 20:52 on
+      // the fixture's date. Every other test in this group already uses _now.
       await pumpChips(
         tester,
         CoachReportSummary.fromReports(
           'S9',
           [report('S9', CoachReportCategory.ac, ago: const Duration(minutes: 8))],
-          now: DateTime.now(),
+          now: _now,
         ),
       );
       expect(find.textContaining('updated'), findsOneWidget);
