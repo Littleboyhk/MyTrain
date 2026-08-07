@@ -432,9 +432,13 @@ class TrainRepository {
   /// QUOTA FIX: tapping Search fires two identical lookups at once — the home
   /// screen fetches for its inline list while the results screen it just pushed
   /// fetches for the list. Both missed the server cache before either could
-  /// write it, so ONE user action cost TWO of the 50 monthly RailKit requests
-  /// (confirmed in railkit_api_log: two `search:KYJ:SBC` rows 119ms apart).
+  /// write it, so ONE user action cost TWO RailKit requests (confirmed in
+  /// railkit_api_log: two `search:KYJ:SBC` rows 119ms apart, back when
+  /// `search-trains` still went through `cachedCall` and logged them).
   /// Concurrent callers now share a single Future and therefore a single request.
+  ///
+  /// The budget is [RAILKIT_MONTHLY_LIMIT] — 10,000 on the current Enterprise
+  /// plan, not the 50 this note used to cite.
   ///
   /// Keyed without the date on purpose, matching the server cache key: RailKit's
   /// search ignores the date, so same-route requests are interchangeable.

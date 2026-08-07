@@ -37,9 +37,16 @@ import 'live_tracking_screen.dart';
 /// DATA + QUOTA NOTES
 /// ------------------
 /// Results come from `trainRepository.betweenStations`, which goes through the
-/// `search-trains` Edge Function — server-side cached under `search:FROM:TO` and
-/// counted against the 50/month RailKit budget. This screen deliberately adds NO
-/// direct call path.
+/// `search-trains` Edge Function and is counted against the RailKit monthly
+/// budget — 10,000 on the current Enterprise plan. This was documented here as
+/// 50, the free-tier figure, which was also hardcoded server-side as
+/// RAILKIT_MONTHLY_LIMIT and silently capped live tracking at 50 requests a month
+/// on a 10,000-request account. This screen deliberately adds NO direct call path.
+///
+/// NOTE: `search-trains` does not currently go through `cachedCall`, so despite
+/// what this note used to claim it is neither cached under `search:FROM:TO` nor
+/// counted. Restoring that is tracked separately; the reasoning below about not
+/// refetching still stands, and matters more while the cache is absent.
 ///
 /// The search is fetched ONCE and every filter/sort here is applied client-side.
 /// That is not just an optimisation: the cache key intentionally omits the date
@@ -825,9 +832,12 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
 /// How many cards fetch their platform automatically.
 ///
 /// QUOTA: each platform lookup is one `getTrainInfo` request (cached 24h after
-/// the first). A 9-train result set fetching all of them would spend 9 of the
-/// 50 free-tier requests per month on a single search. So only the top few
-/// auto-load; the rest fetch on tap.
+/// the first). A 9-train result set fetching all of them would spend 9 requests
+/// on a single search. So only the top few auto-load; the rest fetch on tap.
+///
+/// The budget is 10,000/month on the current Enterprise plan. This note said "9
+/// of the 50 free-tier requests"; the restraint is still right, but 9 of 50 is
+/// what made it feel urgent.
 const int _kAutoPlatformLookups = 2;
 
 /// One flattened list entry: either a route band ([train] == null) or a card.
