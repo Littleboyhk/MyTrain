@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/delay_status.dart';
 import '../models/journey.dart';
 import '../models/live_position.dart';
+import '../models/station.dart';
 import '../models/station_live_status.dart';
 import '../models/tracking_state.dart';
 import '../models/train_summary.dart';
@@ -59,6 +60,53 @@ final trackingProvider =
     NotifierProvider.family<TrackingController, TrackingState, TrackingArgs>(
   TrackingController.new,
 );
+
+/// The outcome of trying to place a live payload's reported station onto the
+/// rendered route.
+///
+/// Split out of [TrackingController] and kept pure so the invariant below can be
+/// tested without standing up a fake RailKit/RailRadar pair: the decision it
+/// encodes is the difference between an observed position and a guess, and that
+/// is worth pinning down directly.
+@immutable
+class PositionResolution {
+  /// Index into the route, or -1 when the reported code matched nothing.
+  final int index;
+
+  /// The code that was looked up, upper-cased. Null when none was reported.
+  final String? code;
+
+  const PositionResolution._(this.index, this.code);
+
+  /// True only when the feed's station was actually found on this route.
+  bool get resolved => index >= 0;
+
+  /// THE LOAD-BEARING RULE. An unresolved code means we hold a live payload but
+  /// no live *position* — the only thing left to draw from is the timetable, so
+  /// the provenance must say so. Reporting [PositionSource.liveApi] here is what
+  /// let a schedule guess reach the screen wearing a live badge.
+  PositionSource get source =>
+      resolved ? PositionSource.liveApi : PositionSource.scheduleOnly;
+
+  /// Mirrors [source]: only a resolved station is a confirmed running-status fix.
+  bool get live => resolved;
+
+  /// Match the feed's `currentStationCode` against [stations], upper-cased on
+  /// both sides — the two datasets disagree on capitalisation and on names, so
+  /// codes are the only viable join key.
+  static PositionResolution resolve(
+    List<Station> stations,
+    String? currentStationCode,
+  ) {
+    final code = currentStationCode?.trim().toUpperCase();
+    if (code == null || code.isEmpty) {
+      return const PositionResolution._(-1, null);
+    }
+    final i =
+        stations.indexWhere((s) => s.code.trim().toUpperCase() == code);
+    return PositionResolution._(i, code);
+  }
+}
 
 class TrackingController extends Notifier<TrackingState> {
   TrackingController(this.arg);
@@ -444,17 +492,51 @@ class TrackingController extends Notifier<TrackingState> {
     }
 
     // Map the reported station code onto the real route index.
-    int index = -1;
-    final code = live.currentStationCode?.toUpperCase();
-    if (code != null) {
-      final i = journey.stations
-          .indexWhere((s) => s.code.toUpperCase() == code);
-      if (i >= 0) index = i;
+    //
+    // PROVENANCE FOLLOWS THE RESOLUTION, NOT THE FETCH.
+    //
+    // A live payload can arrive, be `started`, and still leave us unable to say
+    // where the train is — if its `currentStationCode` matches no station on the
+    // rendered route, there is no observed position, only the timetable. This
+    // used to report `live: true` / [PositionSource.liveApi] regardless, which
+    // labelled a dead-reckoned guess from [_estimateSchedulePosition] as an
+    // authoritative fix. That is the precise thing [PositionSource.scheduleOnly]
+    // exists to prevent, and the sibling `!live.started` branch above already
+    // handles it this way.
+    //
+    // The visible symptom was a marker two stops ahead of the train: with no
+    // resolvable station the estimate falls back to scheduled times offset by a
+    // single global delay, so any under-reported delay silently becomes distance.
+    final res = PositionResolution.resolve(
+      journey.stations,
+      live.currentStationCode,
+    );
+
+    if (!res.resolved) {
+      // Sampled, not exhaustive: a RailRadar route carries pass-through points
+      // (320 entries for 16332), and dumping every code would bury the finding.
+      final sample = journey.stations
+          .take(12)
+          .map((s) => s.code.toUpperCase())
+          .join(', ');
+      debugPrint(
+        '[Tracking] POSITION UNRESOLVED for ${arg.trainNumber}: live status '
+        'reported currentStationCode=${res.code ?? '<null>'} which matches no '
+        'station on the ${journey.stations.length}-stop route. Falling back to '
+        'schedule estimate and reporting ${res.source.name}, NOT liveApi. '
+        'First route codes: [$sample]',
+      );
+    } else {
+      debugPrint(
+        '[Tracking] position resolved for ${arg.trainNumber}: ${res.code} -> '
+        'index ${res.index} of ${journey.stations.length}, delay '
+        '${live.delayMinutes}m',
+      );
     }
 
-    final resolvedPos = index >= 0
+    final resolvedPos = res.resolved
         ? LivePosition(
-            fromIndex: index.clamp(0, journey.stations.length - 1),
+            fromIndex: res.index.clamp(0, journey.stations.length - 1),
             segmentProgress: 0,
             status: live.delayMinutes > 0
                 ? DelayStatus.delayed
@@ -470,8 +552,8 @@ class TrackingController extends Notifier<TrackingState> {
     state = TrackingReady(
       journey: _withStationStatus(journey, live),
       position: resolvedPos,
-      live: true, // confirmed real running status
-      source: PositionSource.liveApi,
+      live: res.live,
+      source: res.source,
       lastSyncedAt: syncedAt,
     );
   }
@@ -552,7 +634,12 @@ class TrackingController extends Notifier<TrackingState> {
   /// is marked [StationLiveStage.unreported] and renders scheduled times only.
   /// One unmatched code never suppresses actuals for the stations that did match.
   Journey _withStationStatus(Journey journey, RailkitLiveStatus live) {
-    if (live.stationStatus.isEmpty) return journey;
+    if (live.stationStatus.isEmpty) {
+      debugPrint('[Tracking] per-station live timing: payload carried NO '
+          'stoppages — every station will render scheduled times only, and no '
+          'delay can be derived from actuals');
+      return journey;
+    }
 
     var matched = 0;
     final stations = journey.stations.map((s) {
@@ -567,6 +654,26 @@ class TrackingController extends Notifier<TrackingState> {
     debugPrint('[Tracking] per-station live timing: matched $matched of '
         '${journey.stations.length} route stations against '
         '${live.stationStatus.length} RailKit stoppages');
+
+    // A total miss is the signature of two datasets using different codes for
+    // the same stops, which presents identically to "the train isn't running":
+    // no actual times anywhere, so no observed delay, so the position estimate
+    // runs on a zero offset and drifts ahead of the train. Printing both sides
+    // is what distinguishes the two, so log the comparison rather than leaving
+    // the reader to infer a join failure from an absence.
+    if (matched == 0) {
+      final routeSample =
+          journey.stations.take(12).map((s) => s.code.toUpperCase()).join(', ');
+      final feedSample = live.stationStatus.keys.take(12).join(', ');
+      debugPrint(
+        '[Tracking] STATION CODE JOIN FAILED — zero of '
+        '${journey.stations.length} route codes matched any of '
+        '${live.stationStatus.length} feed codes. The two sources are not '
+        'using the same codes.\n'
+        '  route codes: [$routeSample]\n'
+        '  feed codes:  [$feedSample]',
+      );
+    }
 
     return Journey(
       trainNumber: journey.trainNumber,
