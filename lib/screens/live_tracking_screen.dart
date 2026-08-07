@@ -39,7 +39,18 @@ import '../widgets/destination_alarm_dialog.dart';
 import '../widgets/location_alarm_sheet.dart';
 import '../widgets/journey_chat_sheet.dart';
 import '../widgets/next_mile_transit_card.dart';
+import '../widgets/emergency_sheet.dart';
+import '../widgets/sos_button.dart';
 import 'coach_position_screen.dart';
+
+/// Height of the floating [BottomActionBar], measured from the bottom of the
+/// screen excluding the system inset. Anything floated over the track has to
+/// clear this or it lands on top of the dock.
+const double _kOverlayBottom = 118;
+
+/// Diameter of the SOS button, so the overlays stacked above it know how far up
+/// to start.
+const double _kSosDiameter = 52;
 
 /// The signature Live Tracking screen.
 class LiveTrackingScreen extends ConsumerStatefulWidget {
@@ -303,15 +314,26 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                 onChat: _onChat,
               ),
             ),
+          // Persistent SOS. Rendered LAST among the bottom-right overlays so it
+          // is never covered, and outside every `state is ...` guard so it is
+          // reachable while the route is still loading or unavailable — an
+          // emergency does not wait for a timetable fetch.
+          Positioned(
+            right: 16,
+            bottom: _kOverlayBottom + bottomInset,
+            child: SosButton(onTap: _onSos),
+          ),
           // Speedometer: only while a GPS session is actually running, which is
           // where the speed comes from. Gating it this way means enabling the
           // setting can never trigger a location prompt on its own.
+          //
+          // Stacked ABOVE the SOS button, which now owns the bottom-right corner.
           if (settings.speedometerEnabled &&
               sharing.active &&
               sharing.mode == CrowdMode.gps)
             Positioned(
               right: 14,
-              bottom: 118 + bottomInset,
+              bottom: _kOverlayBottom + _kSosDiameter + 12 + bottomInset,
               child: const _SpeedometerOverlay(),
             ),
           // Offline indicator. Sits below the sharing chip when both are up, so
@@ -583,6 +605,9 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           trainNumber: journey?.trainNumber ?? _trainNumber,
           trainName: journey?.trainName ?? widget.train?.name ?? 'Train',
           coachPosition: journey?.coachPosition,
+          // Scopes the crowdsourced coach reports. Without it they stay hidden,
+          // because the same train number is a different rake tomorrow.
+          journeyDate: _journeyDate,
         ),
       ),
     );
@@ -610,6 +635,30 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           mode: CrowdMode.gps,
         );
     _toast(Icons.sensors_rounded, 'Sharing location with fellow passengers');
+  }
+
+  /// Opens the Emergency sheet. This is the ONLY thing the SOS button does — no
+  /// dialling, no message, no countdown.
+  ///
+  /// Train identity is read from the tracking provider, falling back to the
+  /// [TrainSummary] this screen was opened with. Both are passed as null when
+  /// there is nothing to report: SOS works standalone, and the sheet omits the
+  /// train and coach lines rather than showing them blank.
+  void _onSos() {
+    Haptics.tap();
+    final journey = switch (ref.read(trackingProvider(_trackingArgs))) {
+      TrackingReady(:final journey) => journey,
+      TrackingNoSignal(:final journey) => journey,
+      _ => null,
+    };
+    final number = journey?.trainNumber ?? widget.train?.number;
+    final name = journey?.trainName ?? widget.train?.name;
+
+    showEmergencySheet(
+      context,
+      trainNumber: (number == null || number.isEmpty) ? null : number,
+      trainName: (name == null || name.isEmpty) ? null : name,
+    );
   }
 
   void _toast(IconData icon, String msg) {

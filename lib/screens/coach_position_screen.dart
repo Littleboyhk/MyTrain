@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/coach_report_service.dart';
+import '../data/sos_context.dart';
 import '../models/berth_bay.dart';
 import '../models/coach_berth_layout.dart';
+import '../models/coach_condition_report.dart';
 import '../widgets/berth_layout.dart';
 import '../models/coach_position.dart';
 import '../theme/app_theme.dart';
 import '../theme/glass_theme.dart';
 import '../utils/formatters.dart';
 import '../utils/haptics.dart';
+import '../widgets/coach_report_chips.dart';
+import '../widgets/coach_report_sheet.dart';
 import '../widgets/coach_type_icons.dart';
 import '../widgets/glass_container.dart';
 import '../widgets/icon_action_button.dart';
@@ -68,7 +74,7 @@ String _trainTitle(String raw) {
 ///
 /// Takes the raw string rather than a `Journey` so it can be exercised directly
 /// with any sequence, including the degenerate ones.
-class CoachPositionScreen extends StatefulWidget {
+class CoachPositionScreen extends ConsumerStatefulWidget {
   const CoachPositionScreen({
     super.key,
     required this.trainNumber,
@@ -76,6 +82,7 @@ class CoachPositionScreen extends StatefulWidget {
     this.coachPosition,
     this.initialCoach,
     this.initialBerth,
+    this.journeyDate,
   });
 
   final String trainNumber;
@@ -92,11 +99,21 @@ class CoachPositionScreen extends StatefulWidget {
   /// Optional berth number to highlight in berth diagram, e.g. 34.
   final int? initialBerth;
 
+  /// `YYYY-MM-DD` for the run being viewed.
+  ///
+  /// OPTIONAL, AND THE CROWDSOURCED REPORTS FEATURE IS INERT WITHOUT IT. Reports
+  /// are scoped to (train_number + journey_date) because the same train number is
+  /// a different physical rake every day; with no date there is no honest way to
+  /// decide which day's reports to show, so the badges, the chip list and the
+  /// report button are all hidden rather than guessing at today.
+  final String? journeyDate;
+
   @override
-  State<CoachPositionScreen> createState() => _CoachPositionScreenState();
+  ConsumerState<CoachPositionScreen> createState() =>
+      _CoachPositionScreenState();
 }
 
-class _CoachPositionScreenState extends State<CoachPositionScreen> {
+class _CoachPositionScreenState extends ConsumerState<CoachPositionScreen> {
   CoachPosition? _position;
   int? _selected;
 
@@ -145,12 +162,76 @@ class _CoachPositionScreenState extends State<CoachPositionScreen> {
 
   void _select(int index) {
     Haptics.selection();
-    setState(() => _selected = _selected == index ? null : index);
+    final next = _selected == index ? null : index;
+    setState(() => _selected = next);
+
+    // Publish the choice for the SOS sheet to pre-fill from.
+    //
+    // ONLY from this deliberate tap. initState also picks a coach — the first
+    // non-engine car, purely so the strip opens on something — and that guess
+    // must never reach an emergency message as if the passenger had told us
+    // where they were sitting.
+    final coaches = _position?.coaches;
+    final code = (next != null && coaches != null && next < coaches.length)
+        ? coaches[next].code
+        : null;
+    ref.read(sessionCoachProvider.notifier).set(code);
+  }
+
+  /// Which train-day's reports this screen shows, or null when it has no journey
+  /// date and the reports feature stays inert.
+  CoachReportKey? get _reportKey {
+    final date = widget.journeyDate;
+    if (date == null || date.isEmpty) return null;
+    return CoachReportKey(trainNumber: widget.trainNumber, journeyDate: date);
+  }
+
+  /// Opens the report sheet, pre-filled with [coach] when one is selected.
+  ///
+  /// The sheet gets the whole rake so it can reuse the same numbered coach
+  /// selector rather than building a second picker with its own idea of the
+  /// composition.
+  Future<void> _openReportSheet(CoachPosition pos, CoachInfo? coach) async {
+    final key = _reportKey;
+    if (key == null) return;
+    Haptics.tap();
+
+    final filed = await showCoachReportSheet(
+      context,
+      trainNumber: key.trainNumber,
+      journeyDate: key.journeyDate,
+      coaches: pos.coaches,
+      initialCoach: coach?.code,
+    );
+    if (!filed || !mounted) return;
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      const SnackBar(
+        // Honest about what just happened: other passengers, not the railways.
+        content: Text('Reported. Other passengers viewing this coach today '
+            'will see it.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final pos = _position;
+
+    // Crowdsourced reports, or an empty map when this screen has no journey date
+    // to scope them to. See the note on [CoachPositionScreen.journeyDate].
+    final reportsByCoach = _reportKey == null
+        ? const <String, CoachReportSummary>{}
+        : ref.watch(coachReportsProvider(_reportKey!)).value ??
+            const <String, CoachReportSummary>{};
+    final selectedCoach =
+        (pos != null && _selected != null) ? pos.coaches[_selected!] : null;
+    final selectedSummary = selectedCoach == null
+        ? null
+        : reportsByCoach[selectedCoach.code.toUpperCase()];
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -181,8 +262,30 @@ class _CoachPositionScreenState extends State<CoachPositionScreen> {
                             position: pos,
                             selectedIndex: _selected,
                             onSelect: _select,
+                            reportsByCoach: reportsByCoach,
                           ),
                           const SizedBox(height: 18),
+                          // Crowdsourced reports for the SELECTED coach, at the
+                          // top of its detail. Renders nothing when there are
+                          // none, or when everything has aged out of
+                          // kCoachReportWindow — no empty state, no tombstone.
+                          if (selectedSummary != null) ...[
+                            CoachReportChips(
+                              summary: selectedSummary,
+                              onReport: _reportKey == null
+                                  ? null
+                                  : () => _openReportSheet(pos, selectedCoach),
+                            ),
+                            const SizedBox(height: 14),
+                          ] else if (_reportKey != null) ...[
+                            // Nothing reported: a quiet way in, rather than the
+                            // amber card advertising a problem that isn't there.
+                            CoachReportAction(
+                              coachCode: selectedCoach?.code,
+                              onTap: () => _openReportSheet(pos, selectedCoach),
+                            ),
+                            const SizedBox(height: 14),
+                          ],
                           // Tap-into-coach berth grid. Only appears once a coach
                           // is picked, and only draws for classes whose cycle
                           // tiles the coach on both builds — see
@@ -524,11 +627,16 @@ class _CoachStrip extends StatefulWidget {
     required this.position,
     required this.onSelect,
     this.selectedIndex,
+    this.reportsByCoach = const {},
   });
 
   final CoachPosition position;
   final int? selectedIndex;
   final ValueChanged<int> onSelect;
+
+  /// Current crowdsourced reports keyed by upper-case coach code. Coaches with
+  /// nothing reported are absent, so a lookup miss means "no badge".
+  final Map<String, CoachReportSummary> reportsByCoach;
 
   @override
   State<_CoachStrip> createState() => _CoachStripState();
@@ -629,6 +737,8 @@ class _CoachStripState extends State<_CoachStrip> {
                 selected: widget.selectedIndex == index,
                 isLast: isLast,
                 onTap: () => widget.onSelect(index),
+                reportCount:
+                    widget.reportsByCoach[coach.code.toUpperCase()]?.total ?? 0,
               );
             },
           ),
@@ -823,12 +933,16 @@ class _CoachTile extends StatelessWidget {
     required this.selected,
     required this.isLast,
     required this.onTap,
+    this.reportCount = 0,
   });
 
   final CoachInfo coach;
   final bool selected;
   final bool isLast;
   final VoidCallback onTap;
+
+  /// Current crowdsourced reports for this coach. Zero draws no badge at all.
+  final int reportCount;
 
   @override
   Widget build(BuildContext context) {
@@ -860,40 +974,55 @@ class _CoachTile extends StatelessWidget {
                         offset: Offset(0, selected ? -0.055 : 0),
                         duration: const Duration(milliseconds: 160),
                         curve: Curves.easeOutCubic,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: radius,
-                            boxShadow: selected
-                                ? [
-                                    BoxShadow(
-                                      color: GlassTheme.accentIndigo
-                                          .withValues(alpha: 0.70),
-                                      blurRadius: 10,
-                                      spreadRadius: 0,
-                                    ),
-                                    BoxShadow(
-                                      color: GlassTheme.accentIndigo
-                                          .withValues(alpha: 0.34),
-                                      blurRadius: 26,
-                                      spreadRadius: 3,
-                                    ),
-                                  ]
-                                : [
-                                    BoxShadow(
-                                      color: Colors.black
-                                          .withValues(alpha: g.isDark ? 0.45 : 0.16),
-                                      blurRadius: 6,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                          ),
-                          child: _CarBody(
-                            fill: _stripFill(_fillFor(coach.type, g), g),
-                            radius: radius,
-                            selected: selected,
-                            coachType: coach.type,
-                            code: coach.code,
-                          ),
+                        // Stacked so the badge floats over the block's corner
+                        // without taking layout space — the strip's geometry is
+                        // depended on by _maybeScrollToSelected's 67px stride and
+                        // by the golden tests, and must not shift.
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: radius,
+                                boxShadow: selected
+                                    ? [
+                                        BoxShadow(
+                                          color: GlassTheme.accentIndigo
+                                              .withValues(alpha: 0.70),
+                                          blurRadius: 10,
+                                          spreadRadius: 0,
+                                        ),
+                                        BoxShadow(
+                                          color: GlassTheme.accentIndigo
+                                              .withValues(alpha: 0.34),
+                                          blurRadius: 26,
+                                          spreadRadius: 3,
+                                        ),
+                                      ]
+                                    : [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(
+                                              alpha: g.isDark ? 0.45 : 0.16),
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                              ),
+                              child: _CarBody(
+                                fill: _stripFill(_fillFor(coach.type, g), g),
+                                radius: radius,
+                                selected: selected,
+                                coachType: coach.type,
+                                code: coach.code,
+                              ),
+                            ),
+                            if (reportCount > 0)
+                              Positioned(
+                                top: -5,
+                                right: -5,
+                                child: CoachReportBadge(count: reportCount),
+                              ),
+                          ],
                         ),
                       ),
                     ),

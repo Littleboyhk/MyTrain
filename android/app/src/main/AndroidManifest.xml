@@ -72,5 +72,27 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- SOS FLOW (lib/widgets/emergency_sheet.dart). Android 11 (API 30)
+             package visibility means url_launcher's canLaunchUrl() returns false
+             for a scheme unless a matching <intent> is declared here, even when a
+             dialer/SMS app is installed.
+
+             DIAL, not CALL: the dialer opens pre-filled and the user taps the call
+             button themselves, so no CALL_PHONE permission is needed. Likewise
+             SENDTO opens the SMS composer pre-filled rather than sending, so no
+             SEND_SMS — a Play Store restricted permission requiring a declaration
+             exception. One extra tap is the deliberate tradeoff. -->
+        <intent>
+            <action android:name="android.intent.action.DIAL"/>
+            <data android:scheme="tel"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="sms"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="smsto"/>
+        </intent>
     </queries>
 </manifest>

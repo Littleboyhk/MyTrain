@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../config/supabase_config.dart';
+import '../anon_id.dart';
 import '../crowd_position_service.dart';
 import 'cell_info_source.dart';
 import 'offline_tracking_controller.dart';
@@ -52,18 +52,14 @@ class CellObservationRecorder extends Notifier<int> {
   /// this project's privacy model avoids. The server salts and hashes this, so
   /// its only purpose is letting aggregation count distinct contributors within
   /// one train-day.
-  late final String _anonId = _rotatingAnonId();
+  ///
+  /// Generator shared with the other crowdsourced submitters — see
+  /// `lib/data/anon_id.dart`.
+  late final String _anonId = rotatingAnonId();
 
   DateTime? _lastRecordedAt;
   int? _lastCellId;
   DateTime? _lastSeenFixAt;
-
-  static String _rotatingAnonId() {
-    final rng = Random.secure();
-    return List<int>.generate(16, (_) => rng.nextInt(256))
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-  }
 
   /// Count of observations sent this session, exposed purely for diagnostics.
   @override

@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:math';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/supabase_config.dart';
+import 'anon_id.dart';
 
 /// Cell-tower (coarse, battery-friendly) vs GPS (fine, shows speed).
 enum CrowdMode { cell, gps }
@@ -290,10 +289,5 @@ class CrowdSharingController extends Notifier<CrowdSharingState> {
     }
   }
 
-  String _rotatingAnonId() {
-    final rng = Random.secure();
-    return List<int>.generate(16, (_) => rng.nextInt(256))
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-  }
+  String _rotatingAnonId() => rotatingAnonId();
 }

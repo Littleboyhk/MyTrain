@@ -403,6 +403,93 @@ export function matchSample(
 }
 
 // ---------------------------------------------------------------------------
+// Corridor-only check
+// ---------------------------------------------------------------------------
+
+export interface CorridorVerdict {
+  /** False only when the point was projected and landed outside the allowance. */
+  insideCorridor: boolean;
+  /** Perpendicular distance to the nearest route segment, metres. */
+  offsetM: number | null;
+  /** Distance along the route of the nearest point, km. */
+  chainageKm: number | null;
+  /** The allowance the offset was compared against, metres. */
+  allowanceM: number | null;
+  /** True when there was nothing to check against, so [insideCorridor] is not a
+   *  judgement. Callers must not treat this as suspicious. */
+  unknown: boolean;
+  reason: string | null;
+}
+
+/**
+ * Is this point plausibly on this train's route corridor?
+ *
+ * SPLIT OUT OF [matchSample] ON PURPOSE, sharing its [projectOnSegment] and its
+ * corridor allowance formula verbatim — there is exactly one definition of "near
+ * the route" in this codebase and this is it.
+ *
+ * The reason it is a separate entry point rather than a call to [matchSample]:
+ * that function answers "is this person riding this train right now", which also
+ * requires clock freshness, schedule agreement and direction of travel. A
+ * one-off coach condition report has none of that context and must not be judged
+ * on it — a passenger reporting a dirty washroom on a train running 4 hours late
+ * is still a passenger. Only the geometry question transfers.
+ *
+ * Fails to "unknown", never to "outside": with no route geometry, or with
+ * unusable coordinates, there is nothing to accuse the submitter of.
+ */
+export function corridorCheck(
+  route: RoutePoint[],
+  lat: number,
+  lng: number,
+  accuracyM: number | null = null,
+  cfg: MatchConfig = DEFAULT_MATCH_CONFIG,
+): CorridorVerdict {
+  const unknown = (reason: string): CorridorVerdict => ({
+    insideCorridor: true,
+    offsetM: null,
+    chainageKm: null,
+    allowanceM: null,
+    unknown: true,
+    reason,
+  });
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return unknown("invalid_coordinates");
+  }
+  if (route.length < 2) return unknown("no_route_geometry");
+
+  let best = { distM: Infinity, chainageKm: 0, segLenM: 0 };
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i];
+    const b = route[i + 1];
+    const { t, distM, segLenM } = projectOnSegment(lat, lng, a.lat, a.lng, b.lat, b.lng);
+    if (distM < best.distM) {
+      best = { distM, chainageKm: a.km + t * (b.km - a.km), segLenM };
+    }
+  }
+  if (!Number.isFinite(best.distM)) return unknown("no_projection");
+
+  // Identical allowance to matchSample: a floor, plus a share of the current
+  // segment's length (straight lines between stations cut corners), plus the
+  // fix's own reported error.
+  const allowanceM = Math.max(
+    cfg.minCorridorM,
+    cfg.corridorSegmentFactor * best.segLenM,
+  ) + Math.min(accuracyM ?? 0, cfg.maxAccuracyM);
+
+  const inside = best.distM <= allowanceM;
+  return {
+    insideCorridor: inside,
+    offsetM: best.distM,
+    chainageKm: best.chainageKm,
+    allowanceM,
+    unknown: false,
+    reason: inside ? null : "off_corridor",
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Session decision
 // ---------------------------------------------------------------------------
 /**
@@ -642,4 +729,167 @@ export function scheduledArrivalEpochMs(
     if (min != null) return journeyStartEpochMs(journeyDate) + min * 60_000;
   }
   return null;
+}
+
+/** Scheduled departure from the origin, epoch ms.
+ *
+ *  Mirror of [scheduledArrivalEpochMs], scanning forward from the first timed
+ *  point instead of backward from the last. Together they bound a journey using
+ *  only the STATIC schedule — no live position, no running status — which is what
+ *  makes them usable as a cheap plausibility gate. */
+export function scheduledDepartureEpochMs(
+  route: RoutePoint[],
+  journeyDate: string,
+): number | null {
+  for (let i = 0; i < route.length; i++) {
+    const min = route[i].departureMin ?? route[i].arrivalMin;
+    if (min != null) return journeyStartEpochMs(journeyDate) + min * 60_000;
+  }
+  return null;
+}
+
+/** IST is UTC+5:30 year round — no daylight saving, so a fixed offset is exact. */
+const IST_OFFSET_MS = 330 * 60_000;
+
+/** The IST calendar date at [atMs], as 'YYYY-MM-DD'.
+ *
+ *  Needed because a journey date is an IST calendar day, not a UTC one: at 02:00
+ *  IST on the 8th it is still the 7th in UTC, and comparing the two would call a
+ *  live journey "tomorrow's" for five and a half hours every night. */
+export function istDateString(atMs: number = Date.now()): string {
+  return new Date(atMs + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Whole days between [journeyDate] and today, both as IST calendar dates.
+ *
+ *  0 = today, 1 = yesterday, negative = the journey date is in the future. */
+export function journeyDateAgeDays(
+  journeyDate: string,
+  nowMs: number = Date.now(),
+): number {
+  const journeyMidnight = journeyStartEpochMs(journeyDate);
+  const todayMidnight = journeyStartEpochMs(istDateString(nowMs));
+  if (!Number.isFinite(journeyMidnight) || !Number.isFinite(todayMidnight)) {
+    return Number.NaN;
+  }
+  return Math.round((todayMidnight - journeyMidnight) / 86_400_000);
+}
+
+// ---------------------------------------------------------------------------
+// Is a journey plausibly in progress?
+// ---------------------------------------------------------------------------
+
+/** How long after scheduled arrival a journey is still treated as current.
+ *
+ *  Generous because Indian trains routinely arrive hours late, and a passenger may
+ *  only act once they are off the train and back on a signal. */
+export const POST_ARRIVAL_GRACE_HOURS = 12;
+
+/** How stale a journey date may be when the schedule gives no upper bound.
+ *
+ *  1 = today or yesterday. Only reached when the static schedule could not be
+ *  loaded, or carried no arrival time — with an arrival in hand, that bound is
+ *  strictly better and this one is not consulted. */
+export const MAX_JOURNEY_AGE_DAYS_WITHOUT_SCHEDULE = 1;
+
+export type JourneyTimingBasis =
+  | "invalid_date"
+  | "future_date"
+  | "not_departed"
+  | "journey_over"
+  | "stale_date"
+  | "schedule"
+  | "schedule_partial"
+  | "date_only";
+
+export interface JourneyTimingVerdict {
+  plausible: boolean;
+  /** User-facing reason. Empty when plausible. */
+  message: string;
+  /** Which rule decided, for server logs. */
+  basis: JourneyTimingBasis;
+}
+
+/**
+ * Could someone plausibly be ON this journey right now?
+ *
+ * Uses ONLY the static schedule — no live position, no running status — so it is
+ * cheap enough to gate a write on, and pure enough to test without a database.
+ * Both bounds are nullable; each rule states what it does without one.
+ *
+ * WHY THIS MAY HARD-REJECT, where the corridor check only flags: no inference is
+ * involved. Deciding whether a GPS fix is "near enough" to a polyline needs an
+ * allowance, a segment factor and the device's own error estimate, so being wrong
+ * is easy. Deciding that a train has not left its origin, or arrived two days ago,
+ * is arithmetic.
+ *
+ * ON THE CALENDAR RULE. It is applied only when no arrival time is available.
+ * Long-distance Indian trains routinely run past two calendar days — 22503 Vivek
+ * Express takes about four, 16317 Himsagar about three and a half — so a passenger
+ * on day three has a journey_date three days old and is entirely legitimate.
+ * Requiring "today or yesterday" on top of a known arrival time would reject
+ * exactly the passengers who have had the most time to notice something wrong.
+ */
+export function journeyTimingVerdict(
+  journeyDate: string,
+  departureMs: number | null,
+  arrivalMs: number | null,
+  nowMs: number = Date.now(),
+): JourneyTimingVerdict {
+  const ageDays = journeyDateAgeDays(journeyDate, nowMs);
+  if (!Number.isFinite(ageDays)) {
+    return {
+      plausible: false,
+      basis: "invalid_date",
+      message: "That journey date isn't a real date.",
+    };
+  }
+
+  // A journey date in the future has no passengers on it yet, whatever the
+  // schedule says. Cheap, and needs no route.
+  if (ageDays < 0) {
+    return {
+      plausible: false,
+      basis: "future_date",
+      message: "That journey hasn't started yet.",
+    };
+  }
+
+  // Lower bound. Usable on its own: the train has not left its origin.
+  if (departureMs !== null && nowMs < departureMs) {
+    return {
+      plausible: false,
+      basis: "not_departed",
+      message: "That train hasn't departed yet.",
+    };
+  }
+
+  // Upper bound, and strictly better than the calendar rule — which is why the
+  // calendar rule is not also applied when this one is available.
+  if (arrivalMs !== null) {
+    const cutoffMs = arrivalMs + POST_ARRIVAL_GRACE_HOURS * 3_600_000;
+    if (nowMs > cutoffMs) {
+      return {
+        plausible: false,
+        basis: "journey_over",
+        message: "That journey finished more than half a day ago.",
+      };
+    }
+    return { plausible: true, basis: "schedule", message: "" };
+  }
+
+  // No arrival time, so nothing above bounds staleness. The calendar rule does.
+  if (ageDays > MAX_JOURNEY_AGE_DAYS_WITHOUT_SCHEDULE) {
+    return {
+      plausible: false,
+      basis: "stale_date",
+      message: "That journey date is too old to report on.",
+    };
+  }
+
+  return {
+    plausible: true,
+    basis: departureMs !== null ? "schedule_partial" : "date_only",
+    message: "",
+  };
 }

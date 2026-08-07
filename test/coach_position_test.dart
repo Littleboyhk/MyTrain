@@ -13,6 +13,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_train/models/coach_position.dart';
 import 'package:my_train/screens/coach_position_screen.dart';
@@ -32,17 +33,21 @@ Widget host({
   required bool dark,
   String? coachPosition,
 }) {
-  return MaterialApp(
-    theme: ThemeData(
-      brightness: dark ? Brightness.dark : Brightness.light,
-      extensions: <ThemeExtension<dynamic>>[
-        dark ? GlassTheme.dark : GlassTheme.light,
-      ],
-    ),
-    home: CoachPositionScreen(
-      trainNumber: '16332',
-      trainName: 'MUMBAI LTT EXPRESS',
-      coachPosition: coachPosition,
+  // CoachPositionScreen is a ConsumerStatefulWidget: selecting a coach publishes
+  // it to sessionCoachProvider for the SOS sheet to pre-fill from.
+  return ProviderScope(
+    child: MaterialApp(
+      theme: ThemeData(
+        brightness: dark ? Brightness.dark : Brightness.light,
+        extensions: <ThemeExtension<dynamic>>[
+          dark ? GlassTheme.dark : GlassTheme.light,
+        ],
+      ),
+      home: CoachPositionScreen(
+        trainNumber: '16332',
+        trainName: 'MUMBAI LTT EXPRESS',
+        coachPosition: coachPosition,
+      ),
     ),
   );
 }

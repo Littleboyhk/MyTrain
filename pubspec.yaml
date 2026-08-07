@@ -50,6 +50,10 @@ dependencies:
   audioplayers: ^6.8.1
   flutter_map: ^8.3.1
   latlong2: ^0.10.1
+  # Launches `tel:` / `sms:` URIs for the SOS flow (lib/widgets/emergency_sheet.dart).
+  # Already in the lockfile as a transitive dep of supabase_flutter at 6.3.2, so
+  # promoting it to a direct dependency resolves without a new download.
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

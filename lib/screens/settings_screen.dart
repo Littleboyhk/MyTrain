@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/app_settings_controller.dart';
 import '../data/chat_gate_controller.dart';
+import '../data/emergency_contact_store.dart';
 import '../data/language_controller.dart';
 import '../data/offline/route_cache_store.dart';
 import '../data/phone_auth_service.dart';
+import '../data/sos_audit_log.dart';
 import '../data/spot_notification_service.dart';
 import '../data/theme_controller.dart';
 import '../l10n/app_localizations.dart';
@@ -16,10 +18,12 @@ import '../theme/motion.dart';
 import '../utils/formatters.dart';
 import '../utils/haptics.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/emergency_contact_sheet.dart';
 import '../widgets/icon_action_button.dart';
 import '../widgets/language_picker_sheet.dart';
 import '../widgets/mesh_background.dart';
 import '../widgets/phone_verification_sheet.dart';
+import 'sos_audit_screen.dart';
 
 /// App settings — focused on appearance (light / dark / system) and language.
 class SettingsScreen extends ConsumerWidget {
@@ -81,6 +85,10 @@ class SettingsScreen extends ConsumerWidget {
                 _sectionLabel(context, L10n.of(context).sectionPersonal),
                 const SizedBox(height: 12),
                 _personalCard(context, ref, settings),
+                const SizedBox(height: 28),
+                _sectionLabel(context, 'EMERGENCY CONTACT'),
+                const SizedBox(height: 12),
+                _emergencyCard(context, ref),
                 const SizedBox(height: 28),
                 _sectionLabel(context, L10n.of(context).sectionSpot),
                 const SizedBox(height: 12),
@@ -587,6 +595,109 @@ class SettingsScreen extends ConsumerWidget {
   }
 
 
+
+  // ---------------------------------------------------------------------------
+  // Emergency contact
+  // ---------------------------------------------------------------------------
+
+  /// Up to [kMaxEmergencyContacts] numbers the SOS sheet can text.
+  ///
+  /// LOCAL ONLY, and the card says so in as many words. No Supabase table, no
+  /// auth, no sync — these are stored in the same [SharedPreferences] as every
+  /// other preference and go no further than this device.
+  Widget _emergencyCard(BuildContext context, WidgetRef ref) {
+    final g = context.glass;
+    final contacts = ref.watch(emergencyContactsProvider);
+    final auditCount = ref.watch(sosAuditLogProvider).length;
+    final full = contacts.length >= kMaxEmergencyContacts;
+
+    return GlassContainer(
+      radius: 22,
+      blurSigma: 20,
+      strong: true,
+      padding: const EdgeInsets.all(6),
+      child: Column(
+        children: [
+          for (int i = 0; i < contacts.length; i++) ...[
+            if (i > 0) _divider(context),
+            _accountRow(
+              context,
+              icon: Icons.contact_emergency_rounded,
+              title: contacts[i].displayLabel,
+              subtitle: contacts[i].number,
+              trailing: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () async {
+                  Haptics.tap();
+                  final removed = contacts[i].displayLabel;
+                  ref.read(emergencyContactsProvider.notifier).removeAt(i);
+                  if (!context.mounted) return;
+                  _toast(context, 'Removed $removed');
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Icon(Icons.delete_outline_rounded,
+                      size: 20, color: g.statusRed),
+                ),
+              ),
+              onTap: () async {
+                Haptics.tap();
+                final saved = await showEmergencyContactEditor(
+                  context,
+                  index: i,
+                  existing: contacts[i],
+                );
+                if (!saved || !context.mounted) return;
+                _toast(context, 'Contact updated');
+              },
+            ),
+          ],
+          if (contacts.isNotEmpty) _divider(context),
+          _accountRow(
+            context,
+            icon: full ? Icons.lock_outline_rounded : Icons.add_rounded,
+            title: full ? 'All $kMaxEmergencyContacts slots used' : 'Add contact',
+            subtitle: full
+                ? 'Remove one to add another'
+                : contacts.isEmpty
+                    ? 'Who should the SOS button text? Saved on this device only.'
+                    : '${kMaxEmergencyContacts - contacts.length} more can be saved',
+            trailing: full
+                ? null
+                : Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
+            onTap: full
+                ? null
+                : () async {
+                    Haptics.tap();
+                    final saved = await showEmergencyContactEditor(context);
+                    if (!saved || !context.mounted) return;
+                    _toast(context, 'Emergency contact saved');
+                  },
+          ),
+          _divider(context),
+          // Always offered, even with no contacts saved: the call buttons work
+          // without one, so there can be activity to review regardless.
+          _accountRow(
+            context,
+            icon: Icons.history_rounded,
+            title: 'View past SOS activity',
+            subtitle: auditCount == 0
+                ? 'Nothing recorded yet'
+                : '$auditCount recorded ${auditCount == 1 ? 'action' : 'actions'} '
+                    '· this device only',
+            trailing:
+                Icon(Icons.chevron_right_rounded, size: 20, color: g.textMuted),
+            onTap: () {
+              Haptics.tap();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const SosAuditScreen()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // Shared rows
@@ -1097,6 +1208,51 @@ class SettingsScreen extends ConsumerWidget {
           color: context.glass.border.withValues(alpha: 0.15),
         ),
       );
+}
+
+/// Opens Settings with the Emergency Contact editor already up.
+///
+/// Called by the SOS sheet when the text action is tapped with no contact saved:
+/// the button routes to the setting rather than doing nothing.
+///
+/// PUSHED, not pushed-and-replaced, and the caller does not dismiss the SOS sheet
+/// first — so coming back lands on the sheet exactly as it was, with the coach
+/// that was typed and the location that was resolved still there, and the text
+/// action now live.
+Future<void> openEmergencyContactSettings(BuildContext context) {
+  return Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => const _EmergencyContactSettings()),
+  );
+}
+
+/// Settings, with the contact editor auto-opened on arrival.
+///
+/// A thin wrapper rather than a flag on [SettingsScreen], which is a
+/// [ConsumerWidget] and has nowhere to hang a once-only side effect.
+class _EmergencyContactSettings extends ConsumerStatefulWidget {
+  const _EmergencyContactSettings();
+
+  @override
+  ConsumerState<_EmergencyContactSettings> createState() =>
+      _EmergencyContactSettingsState();
+}
+
+class _EmergencyContactSettingsState
+    extends ConsumerState<_EmergencyContactSettings> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Only when there is nothing saved. Arriving here with contacts already
+      // set means the user wants to manage them, not add another.
+      if (ref.read(emergencyContactsProvider).isNotEmpty) return;
+      showEmergencyContactEditor(context);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const SettingsScreen();
 }
 
 class _ThemeOption extends StatelessWidget {
