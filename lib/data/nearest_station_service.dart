@@ -132,6 +132,27 @@ class NearestStationService {
         DateTime.now().difference(at) < fixTtl;
   }
 
+  /// The raw coordinates behind the most recent fix, and when it was taken.
+  ///
+  /// Everything else here consumes a fix and hands back *stations*. The SOS flow
+  /// (see `lib/data/sos_context.dart`) needs the numbers themselves — for the
+  /// `maps.google.com` link in the outgoing message, and as the fallback label
+  /// when the coordinate asset can offer no station name. Returned as a record so
+  /// callers don't have to import geolocator to read two doubles, and NOT gated
+  /// on [fixTtl]: a stale fix is still the best answer available in an emergency,
+  /// and [at] is included so the caller can judge for itself.
+  ({double lat, double lng, double? accuracyM, DateTime at})? get lastFix {
+    final fix = _cachedFix;
+    final at = _cachedFixAt;
+    if (fix == null || at == null) return null;
+    return (
+      lat: fix.latitude,
+      lng: fix.longitude,
+      accuracyM: fix.accuracy.isFinite ? fix.accuracy : null,
+      at: at,
+    );
+  }
+
   /// Asks for location, then returns the stations closest to it.
   ///
   /// Permission is requested ONLY here — never at app launch — so it is always
@@ -139,7 +160,16 @@ class NearestStationService {
   ///
   /// [forceRefresh] skips the cached fix when a caller genuinely wants a new
   /// reading rather than a repeat of the last one.
-  Future<NearestStationResult> find({bool forceRefresh = false}) async {
+  ///
+  /// [requestPermission] false resolves with [NearestStationError.permissionDenied]
+  /// instead of raising the OS prompt. The SOS sheet uses this: an emergency is
+  /// the worst possible moment for a modal system dialog to appear unbidden over
+  /// the call buttons, so it reads location only if the grant already exists and
+  /// offers an explicit "Enable location" tap otherwise.
+  Future<NearestStationResult> find({
+    bool forceRefresh = false,
+    bool requestPermission = true,
+  }) async {
     final Position position;
 
     if (!forceRefresh && hasFreshFix) {
@@ -147,7 +177,7 @@ class NearestStationService {
       debugPrint('[NearestStation] reusing fix from '
           '${DateTime.now().difference(_cachedFixAt!).inSeconds}s ago');
     } else {
-      final gate = await _ensureLocation();
+      final gate = await _ensureLocation(requestPermission: requestPermission);
       if (gate != null) return gate;
 
       final fix = await _currentPosition();
@@ -163,7 +193,9 @@ class NearestStationService {
 
   /// Location services + permission. Returns a failure to hand straight back, or
   /// null when everything is in order.
-  Future<NearestStationFailure?> _ensureLocation() async {
+  Future<NearestStationFailure?> _ensureLocation({
+    bool requestPermission = true,
+  }) async {
     try {
       final on = await Geolocator.isLocationServiceEnabled()
           .timeout(_serviceCheckTimeout);
@@ -176,7 +208,7 @@ class NearestStationService {
 
       var permission =
           await Geolocator.checkPermission().timeout(_permissionTimeout);
-      if (permission == LocationPermission.denied) {
+      if (permission == LocationPermission.denied && requestPermission) {
         permission =
             await Geolocator.requestPermission().timeout(_permissionTimeout);
       }

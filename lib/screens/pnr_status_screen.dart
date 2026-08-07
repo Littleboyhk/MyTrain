@@ -7,6 +7,7 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../data/pnr_service.dart';
 import '../data/railkit_service.dart';
 import '../data/saved_pnr_store.dart';
+import '../data/sos_context.dart';
 import '../l10n/app_localizations.dart';
 import '../models/pnr_status.dart';
 import '../models/train_summary.dart';
@@ -92,6 +93,13 @@ class _PnrStatusScreenState extends ConsumerState<PnrStatusScreen> {
       return;
     }
     if (!mounted || _submittedPnr != pnr) return; // superseded by a newer query
+    // Remember a REAL successful lookup for the SOS flow to include in its
+    // message. Deliberately not sourced from SavedPnrStore, which seeds a demo
+    // ticket on first read — a fabricated PNR in an emergency SMS would be worse
+    // than no PNR at all. Session-scoped; see SessionPnr.
+    if (result != null) {
+      ref.read(sessionPnrProvider.notifier).set(result.pnr);
+    }
     setState(() {
       _result = result;
       _phase = result == null ? _Phase.notFound : _Phase.result;
@@ -392,6 +400,7 @@ class _PnrResultView extends StatelessWidget {
           travelClass: result.travelClass,
           trainNumber: result.train.number,
           trainName: result.train.name,
+          journeyDate: result.journeyDate,
         ),
       const _FooterNote(),
     ];
@@ -820,18 +829,34 @@ class _PassengersHeader extends StatelessWidget {
   }
 }
 
+/// `YYYY-MM-DD` for a journey date, or null.
+///
+/// The wire format every crowdsourced feature scopes on. Local date parts, not
+/// UTC: a 23:50 IST departure must not be filed under the previous day.
+String? _isoDate(DateTime? d) {
+  if (d == null) return null;
+  return '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+}
+
 class _PassengerCard extends StatelessWidget {
   const _PassengerCard({
     required this.passenger,
     required this.travelClass,
     required this.trainNumber,
     required this.trainName,
+    this.journeyDate,
   });
 
   final PnrPassenger passenger;
   final String? travelClass;
   final String trainNumber;
   final String trainName;
+
+  /// The ticket's journey date, used to scope crowdsourced coach reports on the
+  /// Coach Position screen. Nullable because a PNR can come back without one.
+  final DateTime? journeyDate;
 
   @override
   Widget build(BuildContext context) {
@@ -892,6 +917,10 @@ class _PassengerCard extends StatelessWidget {
                         trainName: trainName,
                         initialCoach: passenger.current.coach,
                         initialBerth: int.tryParse(passenger.current.berth ?? ''),
+                        // Scopes the crowdsourced coach reports to this ticket's
+                        // run. Null when the PNR carried no date, which leaves
+                        // the reports hidden rather than showing another day's.
+                        journeyDate: _isoDate(journeyDate),
                       ),
                     ),
                   );

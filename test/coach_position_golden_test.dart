@@ -19,6 +19,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_train/screens/coach_position_screen.dart';
 import 'package:my_train/theme/glass_theme.dart';
@@ -61,19 +62,23 @@ Future<void> loadRealFonts() async {
 }
 
 Widget host({required bool dark, String? coachPosition}) {
-  return MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      brightness: dark ? Brightness.dark : Brightness.light,
-      fontFamily: 'Roboto',
-      extensions: <ThemeExtension<dynamic>>[
-        dark ? GlassTheme.dark : GlassTheme.light,
-      ],
-    ),
-    home: CoachPositionScreen(
-      trainNumber: '16332',
-      trainName: 'MUMBAI LTT EXPRESS',
-      coachPosition: coachPosition,
+  // CoachPositionScreen is a ConsumerStatefulWidget: selecting a coach publishes
+  // it to sessionCoachProvider for the SOS sheet to pre-fill from.
+  return ProviderScope(
+    child: MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: dark ? Brightness.dark : Brightness.light,
+        fontFamily: 'Roboto',
+        extensions: <ThemeExtension<dynamic>>[
+          dark ? GlassTheme.dark : GlassTheme.light,
+        ],
+      ),
+      home: CoachPositionScreen(
+        trainNumber: '16332',
+        trainName: 'MUMBAI LTT EXPRESS',
+        coachPosition: coachPosition,
+      ),
     ),
   );
 }

@@ -10,6 +10,7 @@
 // the cycle unchecked. Any class whose cycle does not tile the coach on BOTH
 // builds must therefore be refused outright.
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_train/models/berth_bay.dart';
 import 'package:my_train/models/coach_berth_layout.dart';
@@ -28,17 +29,21 @@ CoachBerthLayout? layoutFor(String code, {String trainName = 'CAPE SBC EXPRESS'}
     CoachBerthLayout.tryBuild(coach: coachFor(code), trainName: trainName);
 
 Widget host({required bool dark, required String sequence, required String train}) {
-  return MaterialApp(
-    theme: ThemeData(
-      brightness: dark ? Brightness.dark : Brightness.light,
-      extensions: <ThemeExtension<dynamic>>[
-        dark ? GlassTheme.dark : GlassTheme.light,
-      ],
-    ),
-    home: CoachPositionScreen(
-      trainNumber: '16525',
-      trainName: train,
-      coachPosition: sequence,
+  // CoachPositionScreen is a ConsumerStatefulWidget: selecting a coach publishes
+  // it to sessionCoachProvider for the SOS sheet to pre-fill from.
+  return ProviderScope(
+    child: MaterialApp(
+      theme: ThemeData(
+        brightness: dark ? Brightness.dark : Brightness.light,
+        extensions: <ThemeExtension<dynamic>>[
+          dark ? GlassTheme.dark : GlassTheme.light,
+        ],
+      ),
+      home: CoachPositionScreen(
+        trainNumber: '16525',
+        trainName: train,
+        coachPosition: sequence,
+      ),
     ),
   );
 }
