@@ -116,10 +116,44 @@ class TrackingReady extends TrackingState {
   int get fromIndex => position.fromIndex.clamp(0, lastIndex);
 
   /// The station currently being approached — the highlighted "current" row.
+  ///
+  /// This is the next ROUTE ENTRY, which on a RailRadar route is very often a
+  /// pass-through point the train will not stop at (278 of 320 entries for
+  /// 16332). That is correct for track geometry — the train really does travel
+  /// through it next — but it is NOT the answer to "what is the next stop".
+  /// For anything user-facing that says *stop*, use [nextStopIndex].
   int get currentIndex => (fromIndex + 1).clamp(0, lastIndex);
 
-  Station get fromStation => stations[fromIndex];
   Station get currentStation => stations[currentIndex];
+
+  /// The next station the train will actually STOP at.
+  ///
+  /// Scans forward from [currentIndex] past every [Station.isPassThrough] entry.
+  /// Without this the hero card announced "NEXT STOP Mullurcarai" for a station
+  /// 16525 passes without stopping — while the timeline, which has its own
+  /// pass-through check, had already collapsed that same station out of the list.
+  /// The two disagreed because only one of them was asking about stops.
+  ///
+  /// Skips ONLY pass-through entries. A minor halt is a real stop and stays.
+  ///
+  /// Falls back to [lastIndex]: a terminus is always a stop, so the scan cannot
+  /// run off the end in practice, and if the data were ever malformed enough for
+  /// it to try, naming the destination beats naming nothing.
+  int get nextStopIndex {
+    for (var i = currentIndex; i <= lastIndex; i++) {
+      if (!stations[i].isPassThrough) return i;
+    }
+    return lastIndex;
+  }
+
+  /// The next station the train will actually stop at. See [nextStopIndex].
+  Station get nextStop => stations[nextStopIndex];
+
+  /// True when the very next route entry is also the next real stop — i.e. no
+  /// pass-through points sit in between.
+  bool get nextEntryIsAStop => nextStopIndex == currentIndex;
+
+  Station get fromStation => stations[fromIndex];
 
   double get segmentDistanceKm =>
       (stations[currentIndex].distanceFromOriginKm -
@@ -156,6 +190,36 @@ class TrackingReady extends TrackingState {
 
   DateTime get etaNextClock =>
       DateTime.now().add(Duration(minutes: etaNextMinutes));
+
+  /// Distance to the next station the train will actually STOP at.
+  ///
+  /// Measured from cumulative chainage rather than by summing segments, so it
+  /// stays correct across however many pass-through points intervene. Falls back
+  /// to [distanceToNextKm] when the next entry is already the next stop, which
+  /// keeps the common case bit-for-bit identical to the old behaviour.
+  double get distanceToNextStopKm {
+    if (nextEntryIsAStop) return distanceToNextKm;
+    return (nextStop.distanceFromOriginKm - distanceCoveredKm)
+        .clamp(0, double.infinity);
+  }
+
+  /// Minutes to the next real stop.
+  ///
+  /// [etaOverrideMinutes] is honoured only when the next entry IS the next stop:
+  /// offline tracking measures that override against the next route entry, so
+  /// applying it to a stop further down the line would understate the time.
+  ///
+  /// Uses [effectiveSpeedKmh] — the device's measured speed when it has one.
+  /// (Note [etaNextMinutes] above still divides by the nominal [avgSpeedKmh];
+  /// that predates this getter and is left as-is rather than changed silently.)
+  int get etaNextStopMinutes {
+    if (nextEntryIsAStop && etaOverrideMinutes != null) {
+      return etaOverrideMinutes!;
+    }
+    final speed = effectiveSpeedKmh;
+    if (speed <= 0) return 0;
+    return (distanceToNextStopKm / speed * 60).ceil();
+  }
 
   bool get isArrived =>
       currentIndex >= lastIndex && position.segmentProgress >= 0.999;
