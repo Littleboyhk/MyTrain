@@ -227,7 +227,30 @@ class _RailStationRowState extends ConsumerState<RailStationRow> {
       animation: anim,
       builder: (context, _) {
         final localY = anim.value - widget.rowTop;
-        final owns = localY >= 0 && localY < item.height;
+
+        // OWNERSHIP IS BY THE MARKER'S BOTTOM EDGE, NOT ITS CENTRE.
+        //
+        // The marker is a TrainMarker.ringSize (44px) ring drawn inside ONE
+        // row's gutter, while rows are only 40–52px tall, so it almost always
+        // overflows the row that draws it. Rows are siblings in a SliverList and
+        // paint in index order, and every row paints an opaque track bar across
+        // its full height — so any part of the marker hanging BELOW its own row
+        // is painted over by the next row's bar. That is what sliced the icon in
+        // half.
+        //
+        // Owning by the bottom edge means the marker only ever overflows
+        // UPWARDS, into rows that have already painted, where later paint wins
+        // and the whole marker survives. Exactly one row can contain the bottom
+        // edge, so there is still no double-draw.
+        const half = TrainMarker.ringSize / 2;
+        final localBottom = localY + half;
+        final owns = (localBottom >= 0 && localBottom < item.height)
+            // The terminus has no following row to hand ownership to, and the
+            // origin none preceding, so the end rows keep a marker whose bottom
+            // edge falls outside the track entirely.
+            || (item.isLast && localBottom >= item.height)
+            || (item.isFirst && localBottom < 0);
+
         return _gutterStack(
           startY: startY,
           endY: endY,

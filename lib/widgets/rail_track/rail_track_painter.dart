@@ -41,17 +41,44 @@ class RailTrackPainter extends CustomPainter {
   /// passes [RailMetrics.pipCenterY] — no track past the last station.
   final double? endY;
 
+  /// Overlap added to the bottom of a slice that runs to its row's edge.
+  ///
+  /// WHY AN OVERLAP AND NOT EXACT ABUTMENT. Row heights are the proportional
+  /// distance spacing, so they are fractional — a row is 40.7px, not 41. Two
+  /// slices meeting at a fractional y each antialias against the background over
+  /// the shared boundary, and two half-covered pixels do not add back to one
+  /// solid one: the result is a hairline of blended colour that reads as a gap in
+  /// the rail, repeating at every row edge down the whole route.
+  ///
+  /// A whole logical pixel of overlap puts the join safely inside solid paint at
+  /// any device pixel ratio. Safe to overlap because [barColor] is fully opaque
+  /// in both themes (`0xFF255C7E` / `0xFF2F6E92`), so the doubled band is
+  /// indistinguishable from single coverage — with a translucent bar this would
+  /// have to snap to device pixels instead.
+  ///
+  /// Applied ONLY when [endY] is null, i.e. when the slice runs to the row edge
+  /// because another row continues below it. The terminus passes an explicit
+  /// [endY] and must not bleed past the final dot.
+  static const double seamBleed = 1.0;
+
   @override
   void paint(Canvas canvas, Size size) {
     final top = startY;
-    final bottom = endY ?? size.height;
-    if (bottom - top <= 0) return;
+    // Degeneracy is judged on the REAL bounds, before any bleed: a zero-height
+    // slice must paint nothing at all, and must not be resurrected into a
+    // hairline by the overlap below.
+    final realBottom = endY ?? size.height;
+    if (realBottom - top <= 0) return;
+
+    final bottom = endY == null ? realBottom + seamBleed : realBottom;
 
     final cx = size.width / 2;
     final half = RailMetrics.barWidth / 2;
 
-    // Butt ends, not rounded: consecutive rows must abut exactly so the bar
-    // reads as one continuous rail down the whole route.
+    // Butt ends, not rounded: consecutive rows must read as one continuous rail
+    // down the whole route. They overlap by [seamBleed] rather than abutting
+    // exactly, because exact abutment on fractional row heights antialiases into
+    // a visible hairline — see [seamBleed].
     canvas.drawRect(
       Rect.fromLTRB(cx - half, top, cx + half, bottom),
       Paint()..color = barColor,

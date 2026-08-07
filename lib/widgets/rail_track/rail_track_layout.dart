@@ -423,9 +423,30 @@ class RailTrackLayout {
         hasPassThrough ? s.isPassThrough : s.isMinorHalt;
 
     bool isSignificant(int i) {
-      if (stations[i].isPassThrough) return false;
+      // Origin and terminus anchor the route and are always stops.
       if (i == 0 || i == lastIndex) return true;
-      if (i == fromIndex || i == currentIndex) return true;
+
+      // THE TRAIN'S OWN ROW OUTRANKS COLLAPSING, AND MUST BE TESTED FIRST.
+      //
+      // The marker is placed row-locally inside fromIndex's row (see step 6),
+      // so if that row is collapsed into a gap the marker has nowhere to live:
+      // the lookup finds no RailStationItem for the anchor, markerItemIndex
+      // stays null, and the train icon disappears from the screen entirely.
+      //
+      // This used to sit BELOW the isPassThrough check, which meant the early
+      // return won whenever the train's last departed station was a pass-through
+      // point — the normal case on a RailRadar route, where most entries are
+      // pass-through. The comment in step 6 asserting "fromIndex is always
+      // significant" was describing the intent, not the behaviour.
+      if (i == fromIndex) return true;
+
+      // Ordinary pass-through points collapse. Deliberately after fromIndex and
+      // before currentIndex: revealing the station the train has just left is
+      // required for the marker, whereas revealing the next entry is not, and
+      // surfacing every approaching pass-through would undo the collapsing.
+      if (stations[i].isPassThrough) return false;
+
+      if (i == currentIndex) return true;
       return !isCollapsible(stations[i]);
     }
 
@@ -609,7 +630,7 @@ class RailTrackLayout {
       final anchor = markerPos.floor();
       final frac = markerPos - anchor;
 
-      // fromIndex is always significant, so its row is always present.
+      // fromIndex is kept significant by isSignificant, so its row is present.
       for (var i = 0; i < built.length; i++) {
         final item = built[i];
         if (item is RailStationItem && item.stationIndex == anchor) {
@@ -617,6 +638,23 @@ class RailTrackLayout {
           markerY = item.pipCenterY +
               (item.segmentBottomY - item.pipCenterY) * frac.clamp(0.0, 1.0);
           break;
+        }
+      }
+
+      // BELT AND BRACES. The loop above depends on isSignificant keeping the
+      // anchor's row visible; when that invariant broke, the marker did not
+      // degrade, it vanished with no diagnostic. Rather than rely on the two
+      // staying in step, fall back to the nearest visible station row at or
+      // before the anchor and pin the marker to its segment bottom — slightly
+      // behind the truth, but on screen and in the right direction.
+      if (markerItem == null) {
+        for (var i = built.length - 1; i >= 0; i--) {
+          final item = built[i];
+          if (item is RailStationItem && item.stationIndex <= anchor) {
+            markerItem = i;
+            markerY = item.segmentBottomY;
+            break;
+          }
         }
       }
     }
