@@ -17,8 +17,12 @@
 // as they were, because they operate on the response payload rather than on how
 // it was fetched.
 //
-// FREE TIER = 50 requests / MONTH. Every path here is cache-first; only a true
-// cache miss spends a request, and each real call is logged + counted.
+// BUDGET. Every path here is cache-first; only a true cache miss spends a
+// request, and each real call is logged + counted. The monthly ceiling is
+// [RAILKIT_MONTHLY_LIMIT], read from the `RAILKIT_MONTHLY_LIMIT` secret and
+// defaulting to the Enterprise allowance of 10,000/month. It used to be a
+// hardcoded 50 from the free tier, which silently capped live tracking at 50
+// requests a month on a 10,000-request account.
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /// Documented base URL. No trailing slash — every path below starts with one.
@@ -34,6 +38,11 @@ export type RailKitCode =
   | "inactive_key"
   | "quota_exceeded"
   | "validation"
+  /// The upstream answered, but with a transient refusal rather than an answer:
+  /// IRCTC maintenance windows, "try later", booking-host wobbles. Distinct from
+  /// [validation] because retrying is the correct response and the caller's input
+  /// is not at fault. Surfaced as HTTP 503.
+  | "upstream_unavailable"
   | "upstream"
   | "unknown";
 
@@ -91,6 +100,75 @@ function getNextApiKey(): string {
 /// 404 deliberately becomes `upstream`/404: `track-train` treats exactly that
 /// combination as recoverable and falls back to the static schedule, which is how
 /// "no live data for this date" keeps showing the real route.
+/// Phrases that mean "the booking host would not answer", not "your input is
+/// wrong". Observed verbatim from RailKit on 2026-08-08 between 00:10 and 00:25
+/// IST while probing getAvailability:
+///
+///   "Sorry for the inconvenience. Booking will be very slow or not accessible
+///    between 11:45 PM and 00:15 AM, Please try after sometime"
+///   "Unable to perform Transaction. Please try later."
+///   "Unable to process your request"
+///   "Something went wrong while fetching availability."
+///
+/// WHY THIS MATTERS. Availability and PNR hit IRCTC's live booking system, which
+/// has a nightly maintenance window and is generally flaky around midnight IST —
+/// unlike trackTrain, which kept working throughout. All of the above arrive as
+/// HTTP 400 and were previously reported as `validation`, i.e. "bad PNR / train
+/// number / date", so an outage was presented to the user as their own mistake
+/// and no retry was suggested.
+const TRANSIENT_400_PATTERNS = [
+  "try later",
+  "try again",
+  "try after",
+  "unable to perform",
+  "unable to process",
+  "something went wrong",
+  "not accessible",
+  "very slow",
+  "maintenance",
+  "temporarily",
+  "service unavailable",
+  "inconvenience",
+];
+
+/// Phrases that really are about the request. Checked FIRST, so a genuine
+/// rejection carrying a polite "please try again" suffix is not mistaken for an
+/// outage. "Date outside Tatkal ARP" is the observed example: correct, actionable,
+/// and retrying it unchanged will never succeed.
+const BAD_INPUT_400_PATTERNS = [
+  "invalid",
+  "not a valid",
+  "incorrect",
+  "not found",
+  "does not exist",
+  "malformed",
+  "required",
+  "outside tatkal",
+  "arp",
+  "no train",
+  "not available for this",
+];
+
+/// Split an upstream HTTP 400 into [validation] or [upstream_unavailable].
+///
+/// DEFAULTS TO validation, deliberately. An unrecognised 400 keeps the behaviour
+/// it has always had, so this change can only reclassify messages that were
+/// explicitly identified above — a novel outage phrasing is a missed improvement,
+/// whereas a novel domain rejection wrongly marked retryable would loop the user
+/// forever on input that can never succeed. The message itself is surfaced either
+/// way, so the user always sees the upstream's own words. Add patterns as they
+/// are observed rather than inverting this default.
+/// Exported for tests: the classification is the whole point of the split, and it
+/// is driven by upstream prose that will keep changing.
+export function classify400(message: string): RailKitCode {
+  const m = message.toLowerCase();
+  if (BAD_INPUT_400_PATTERNS.some((p) => m.includes(p))) return "validation";
+  if (TRANSIENT_400_PATTERNS.some((p) => m.includes(p))) {
+    return "upstream_unavailable";
+  }
+  return "validation";
+}
+
 function httpError(status: number, payload: unknown, raw: string): RailKitError {
   // deno-lint-ignore no-explicit-any
   const p = payload as any;
@@ -99,8 +177,15 @@ function httpError(status: number, payload: unknown, raw: string): RailKitError 
   );
 
   switch (status) {
-    case 400:
-      return new RailKitError("validation", message, 400);
+    case 400: {
+      const code = classify400(message);
+      // 503 for a transient refusal: it is the upstream that is unavailable, not
+      // the request that is malformed, and the status is what a caller checks
+      // before deciding whether a retry could ever help.
+      return code === "upstream_unavailable"
+        ? new RailKitError("upstream_unavailable", message, 503)
+        : new RailKitError("validation", message, 400);
+    }
     case 401:
       return new RailKitError("invalid_key", message, 401);
     case 403:
@@ -109,6 +194,11 @@ function httpError(status: number, payload: unknown, raw: string): RailKitError 
       return new RailKitError("upstream", message, 404);
     case 429:
       return new RailKitError("quota_exceeded", message, 429);
+    case 502:
+    case 503:
+    case 504:
+      // The upstream itself said it was unavailable — no message matching needed.
+      return new RailKitError("upstream_unavailable", message, 503);
     default:
       return new RailKitError("unknown", `HTTP ${status}: ${message}`, 502);
   }
@@ -215,7 +305,15 @@ export function normalizeError(err: unknown): RailKitError {
     );
   }
   if (m.includes("valid") || m.includes("required") || m.includes("format")) {
-    return new RailKitError("validation", msg || "Validation error", 400);
+    // Same split as [httpError]: a transient refusal that happens to contain one
+    // of those words is not a validation failure.
+    return new RailKitError(classify400(msg), msg || "Validation error",
+      classify400(msg) === "upstream_unavailable" ? 503 : 400);
+  }
+  // A thrown value that reads as a transient refusal, with none of the validation
+  // keywords above.
+  if (TRANSIENT_400_PATTERNS.some((p) => m.includes(p))) {
+    return new RailKitError("upstream_unavailable", msg, 503);
   }
   return new RailKitError("unknown", msg || "Unknown RailKit error", 502);
 }
@@ -325,8 +423,67 @@ export function toRailkitDate(isoDate: string): string {
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const TRAIN_NO = /^\d{3,6}$/;
 
-export const RAILKIT_MONTHLY_LIMIT = 50;
-export const RAILKIT_WARN_AT = 45;
+/// The budget this SERVER will spend per calendar month.
+///
+/// SELF-IMPOSED, AND NOT THE SAME THING AS THE RAILKIT PLAN LIMIT. The guard in
+/// [cachedCall] refuses to spend past this number and answers `quota_exceeded`
+/// (HTTP 429) — so if this is set below the real plan allowance, the app stops
+/// tracking while the account still has thousands of requests in hand, and the
+/// error says "Monthly RailKit request budget reached" as though the upstream had
+/// refused. That is exactly what happened: this was pinned at the free tier's 50
+/// while the account was on Enterprise with 10,000, so live tracking died after
+/// 50 requests a month and fell back to schedule estimation.
+///
+/// READ FROM A SECRET so a plan change needs no redeploy — set
+/// `RAILKIT_MONTHLY_LIMIT` alongside `RAILKIT_API_KEY`. The default matches the
+/// Enterprise allowance the TTLs below are already tuned for.
+///
+/// KEEP THE GUARD. It is not redundant with RailKit's own limit: a polling bug
+/// can burn a paid allowance quickly, and a 429 we raise ourselves is cheaper and
+/// more legible than one we trip upstream.
+const DEFAULT_MONTHLY_LIMIT = 10_000;
+
+let _monthlyLimit: number | null = null;
+
+/// The monthly budget, resolved on FIRST USE rather than at import.
+///
+/// LAZY ON PURPOSE. Reading `Deno.env` at module scope made merely importing this
+/// file a permissioned side effect: `deno test` failed with `NotCapable: Requires
+/// env access` before a single assertion ran, so the pure helpers here could not
+/// be tested without granting `--allow-env`. Edge Functions always have env
+/// access, so nothing changes at runtime — this is purely so importing the module
+/// stays free of side effects.
+///
+/// Cached after the first read: the value cannot change within a warm instance,
+/// and this is consulted on every cache miss.
+export function railkitMonthlyLimit(): number {
+  if (_monthlyLimit !== null) return _monthlyLimit;
+
+  const raw = Deno.env.get("RAILKIT_MONTHLY_LIMIT");
+  if (!raw) return _monthlyLimit = DEFAULT_MONTHLY_LIMIT;
+
+  const n = Number(raw.trim());
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(
+      `[railkit] RAILKIT_MONTHLY_LIMIT is not a positive number ("${raw}") — ` +
+        `falling back to ${DEFAULT_MONTHLY_LIMIT}`,
+    );
+    return _monthlyLimit = DEFAULT_MONTHLY_LIMIT;
+  }
+  return _monthlyLimit = Math.floor(n);
+}
+
+/// Warn at 90% of whatever the budget is, rather than a second hardcoded number
+/// that has to be remembered when the limit moves — which is how 45 was left
+/// behind next to 50.
+export function railkitWarnAt(): number {
+  return Math.max(1, Math.floor(railkitMonthlyLimit() * 0.9));
+}
+
+/// Test-only: forget the cached value so a test can vary the env var.
+export function resetMonthlyLimitCacheForTest(): void {
+  _monthlyLimit = null;
+}
 
 export interface Usage {
   month: string;
@@ -417,19 +574,19 @@ export async function cachedCall<T>(opts: {
     return {
       data: cachedRow!.response_json as T,
       cached: true,
-      usage: { month, count, limit: RAILKIT_MONTHLY_LIMIT, warn: count >= RAILKIT_WARN_AT },
+      usage: { month, count, limit: railkitMonthlyLimit(), warn: count >= railkitWarnAt() },
     };
   }
 
   // 2) Budget guard — never auto-spend past the monthly limit.
   const currentCount = await readCount(db, month);
-  if (currentCount >= RAILKIT_MONTHLY_LIMIT) {
+  if (currentCount >= railkitMonthlyLimit()) {
     if (hasCache) {
       // Serve stale rather than error when we have anything at all.
       return {
         data: cachedRow!.response_json as T,
         cached: true,
-        usage: { month, count: currentCount, limit: RAILKIT_MONTHLY_LIMIT, warn: true },
+        usage: { month, count: currentCount, limit: railkitMonthlyLimit(), warn: true },
       };
     }
     throw new RailKitError(
@@ -459,7 +616,7 @@ export async function cachedCall<T>(opts: {
       return {
         data: cachedRow!.response_json as T,
         cached: true,
-        usage: { month, count: currentCount, limit: RAILKIT_MONTHLY_LIMIT, warn: true },
+        usage: { month, count: currentCount, limit: railkitMonthlyLimit(), warn: true },
       };
     }
     throw e;
@@ -503,6 +660,6 @@ export async function cachedCall<T>(opts: {
   return {
     data: result,
     cached: false,
-    usage: { month, count, limit: RAILKIT_MONTHLY_LIMIT, warn: count >= RAILKIT_WARN_AT },
+    usage: { month, count, limit: railkitMonthlyLimit(), warn: count >= railkitWarnAt() },
   };
 }
