@@ -995,6 +995,25 @@ SeatAllocation _seatFromStatus(String status) =>
 // Additional RailKit Feature Mappers
 // ---------------------------------------------------------------------------
 
+/// Maps RailKit's `getAvailability` payload.
+///
+/// VERIFIED against `test/fixtures/railkit_seat_availability_16525.json`
+/// (16525 KYJ→SBC, 3A/GN, captured 2026-08-08). Shape:
+///
+///   { train: { trainNo, trainName, from, to, fromStationName, toStationName,
+///              distance, travelClass, quota },
+///     fare:  { baseFare, reservationCharge, superfastCharge, serviceTax,
+///              totalFare },
+///     availability: [ { date, status, availabilityText, rawStatus, prediction,
+///                       predictionPercentage, canBook } ] }
+///
+/// EXACT KEYS, NO FALLBACK CHAIN. The previous version guessed
+/// `trainNumber ?? train_number ?? trainNo` at the top level and
+/// `availability ?? days ?? availability_list`, which meant the train number was
+/// always empty (it is nested under `train`) and a shape change would have been
+/// silently absorbed instead of noticed. [from] and [to] are still taken from the
+/// caller rather than the payload, because they are what was ASKED — echoing the
+/// upstream's own codes back would hide a mismatch.
 SeatAvailability? availabilityFromRailkit(
   dynamic data,
   String from,
@@ -1004,14 +1023,23 @@ SeatAvailability? availabilityFromRailkit(
 ) {
   try {
     dynamic node = data;
-    if (node is Map && node['data'] != null) node = node['data'];
+    // Tolerates being handed either the envelope or its `data` member. The
+    // service already unwraps, so this normally does nothing.
+    if (node is Map && node['data'] is Map) node = node['data'];
     if (node is! Map) return null;
     final m = node.cast<String, dynamic>();
 
-    final trainNum = _s(m['trainNumber'] ?? m['train_number'] ?? m['trainNo']);
-    final list = m['availability'] ?? m['days'] ?? m['availability_list'];
+    final train = m['train'] is Map
+        ? (m['train'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+
+    final rawFare = m['fare'];
+    final fare = rawFare is Map
+        ? AvailabilityFare.fromMap(rawFare.cast<String, dynamic>())
+        : null;
 
     final days = <AvailabilityDay>[];
+    final list = m['availability'];
     if (list is List) {
       for (final item in list) {
         if (item is Map) {
@@ -1020,12 +1048,22 @@ SeatAvailability? availabilityFromRailkit(
       }
     }
 
+    final distance = train['distance'];
+
     return SeatAvailability(
-      trainNumber: trainNum,
-      fromStation: from,
-      toStation: to,
+      trainNumber: _s(train['trainNo']),
+      trainName: _s(train['trainName']),
+      // The caller's codes win; see the note above.
+      fromCode: from,
+      toCode: to,
+      fromStationName: _s(train['fromStationName']),
+      toStationName: _s(train['toStationName']),
+      distanceKm: distance is num ? distance : num.tryParse(_s(distance)),
+      // travelClass/quota are echoed by the upstream, but the caller's are what
+      // the result is filed under, so a disagreement cannot mislabel the answer.
       classCode: classCode,
       quota: quota,
+      fare: fare,
       days: days,
     );
   } catch (e) {

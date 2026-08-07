@@ -25,6 +25,7 @@ import '../widgets/train_number_tag.dart';
 import '../widgets/report_missing_train_sheet.dart';
 import '../widgets/route_mini_visual.dart';
 import '../widgets/static_route_map_visual.dart';
+import '../widgets/seat_availability_sheet.dart';
 import '../widgets/split_journey_card.dart';
 import '../widgets/split_journey_disclaimer.dart';
 import '../data/split_journey_service.dart';
@@ -36,9 +37,16 @@ import 'live_tracking_screen.dart';
 /// DATA + QUOTA NOTES
 /// ------------------
 /// Results come from `trainRepository.betweenStations`, which goes through the
-/// `search-trains` Edge Function — server-side cached under `search:FROM:TO` and
-/// counted against the 50/month RailKit budget. This screen deliberately adds NO
-/// direct call path.
+/// `search-trains` Edge Function and is counted against the RailKit monthly
+/// budget — 10,000 on the current Enterprise plan. This was documented here as
+/// 50, the free-tier figure, which was also hardcoded server-side as
+/// RAILKIT_MONTHLY_LIMIT and silently capped live tracking at 50 requests a month
+/// on a 10,000-request account. This screen deliberately adds NO direct call path.
+///
+/// NOTE: `search-trains` does not currently go through `cachedCall`, so despite
+/// what this note used to claim it is neither cached under `search:FROM:TO` nor
+/// counted. Restoring that is tracked separately; the reasoning below about not
+/// refetching still stands, and matters more while the cache is absent.
 ///
 /// The search is fetched ONCE and every filter/sort here is applied client-side.
 /// That is not just an optimisation: the cache key intentionally omits the date
@@ -630,6 +638,146 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
   // ---------------------------------------------------------------------------
   // 6) Sticky bottom bar
   // ---------------------------------------------------------------------------
+
+  /// Open seat availability for the trains on screen.
+  ///
+  /// ROUTE-LEVEL ENTRY POINT. This is the screen's sticky bottom bar, not a
+  /// per-card action, so there is no single train to check — the sheet needs one,
+  /// so the user picks from the loaded results. Prefilling the first result would
+  /// look authoritative while answering about a train they did not choose.
+  ///
+  /// Spends nothing on open: the sheet fetches only when Check is tapped.
+  Future<void> _openSeatAvailability() async {
+    Haptics.selection();
+
+    // Reads the same future the list is built from, then applies the same
+    // filters, so the choices offered are exactly the trains on screen. Already
+    // resolved by the time this bar can be tapped, so the await is free.
+    List<TrainSummary> trains;
+    try {
+      trains = _applyFilters(await _future);
+    } catch (_) {
+      _notAvailable('Could not load trains for this route.');
+      return;
+    }
+    if (!mounted) return;
+
+    if (trains.isEmpty) {
+      _notAvailable('No trains on screen to check availability for.');
+      return;
+    }
+
+    final iso = '${widget.date.year}'
+        '-${widget.date.month.toString().padLeft(2, '0')}'
+        '-${widget.date.day.toString().padLeft(2, '0')}';
+
+    // One train on screen is not a choice worth asking about.
+    final TrainSummary? picked =
+        trains.length == 1 ? trains.first : await _pickTrainForAvailability(trains);
+    if (picked == null || !mounted) return;
+
+    await showSeatAvailabilitySheet(
+      context,
+      trainNumber: picked.number,
+      trainName: picked.name,
+      fromCode: widget.from.code,
+      toCode: widget.to.code,
+      date: iso,
+    );
+  }
+
+  /// Which train to check. A plain glass list — the availability query is
+  /// per-train, so this is the missing input rather than a preference.
+  Future<TrainSummary?> _pickTrainForAvailability(
+      List<TrainSummary> trains) async {
+    final g = context.glass;
+    return showModalBottomSheet<TrainSummary>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.60),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(12),
+        child: GlassContainer(
+          radius: 28,
+          blurSigma: 24,
+          strong: true,
+          glow: true,
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.7,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Check availability for',
+                  style: TextStyle(
+                    color: g.textPrimary,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: trains.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, i) {
+                      final t = trains[i];
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => Navigator.of(ctx).pop(t),
+                        child: GlassContainer(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      t.number,
+                                      style: TextStyle(
+                                        color: g.textPrimary,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      t.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          color: g.textSecondary,
+                                          fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(Icons.chevron_right_rounded,
+                                  size: 20, color: g.textMuted),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _bottomBar() {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     return Padding(
@@ -642,10 +790,7 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
         padding: const EdgeInsets.all(8),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          // No seat/availability data exists in the current source — see report.
-          onTap: () => _notAvailable(
-            'Seat availability needs a booking data source we don\'t have yet.',
-          ),
+          onTap: _openSeatAvailability,
           child: Container(
             height: 50,
             alignment: Alignment.center,
@@ -687,9 +832,12 @@ class _TrainResultsScreenState extends ConsumerState<TrainResultsScreen> {
 /// How many cards fetch their platform automatically.
 ///
 /// QUOTA: each platform lookup is one `getTrainInfo` request (cached 24h after
-/// the first). A 9-train result set fetching all of them would spend 9 of the
-/// 50 free-tier requests per month on a single search. So only the top few
-/// auto-load; the rest fetch on tap.
+/// the first). A 9-train result set fetching all of them would spend 9 requests
+/// on a single search. So only the top few auto-load; the rest fetch on tap.
+///
+/// The budget is 10,000/month on the current Enterprise plan. This note said "9
+/// of the 50 free-tier requests"; the restraint is still right, but 9 of 50 is
+/// what made it feel urgent.
 const int _kAutoPlatformLookups = 2;
 
 /// One flattened list entry: either a route band ([train] == null) or a card.

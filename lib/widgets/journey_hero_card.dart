@@ -23,7 +23,10 @@ class JourneyHeroCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final g = context.glass;
     final from = state.fromStation;
-    final next = state.currentStation;
+    // The next real STOP, not the next route entry. On a RailRadar route the
+    // next entry is usually a pass-through point, and labelling one "NEXT STOP"
+    // named stations the train never halts at.
+    final next = state.nextStop;
     final progress = state.position.segmentProgress;
     final dest = state.journey.destination;
 
@@ -133,7 +136,7 @@ class JourneyHeroCard extends StatelessWidget {
                         textBaseline: TextBaseline.alphabetic,
                         children: [
                           AnimatedCounter(
-                            value: state.distanceToNextKm,
+                            value: state.distanceToNextStopKm,
                             decimals: 1,
                             style: AppText.bigNumeral.copyWith(color: g.textPrimary),
                           ),
@@ -158,7 +161,7 @@ class JourneyHeroCard extends StatelessWidget {
                         textBaseline: TextBaseline.alphabetic,
                         children: [
                           AnimatedCounter(
-                            value: state.etaNextMinutes.toDouble(),
+                            value: state.etaNextStopMinutes.toDouble(),
                             decimals: 0,
                             style: AppText.bigNumeral.copyWith(color: g.textPrimary),
                           ),

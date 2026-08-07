@@ -26,8 +26,28 @@ enum RailKitErrorCode {
   /// so logs say "not deployed" instead of a vague "request failed".
   functionNotDeployed,
 
-  /// 400 — bad PNR / train number / date.
+  /// 400 — the request itself is wrong: bad PNR, train number, station code, or
+  /// a date the quota does not allow (e.g. "Date outside Tatkal ARP"). Retrying
+  /// the same request will never succeed, so the UI must ask the user to change
+  /// something rather than offer a retry.
+  ///
+  /// NARROWER THAN IT WAS. This used to absorb every upstream 400, including
+  /// IRCTC's transient refusals, so a booking-host outage was reported to the
+  /// user as their own bad input. Those now arrive as [upstreamUnavailable].
   validation,
+
+  /// 503 — the upstream answered, but refused rather than replying.
+  ///
+  /// Availability and PNR go through IRCTC's live booking system, which has a
+  /// nightly maintenance window (roughly 23:45–00:15 IST) and is flaky around it.
+  /// Observed messages include "Unable to perform Transaction. Please try later.",
+  /// "Booking will be very slow or not accessible…" and "Something went wrong
+  /// while fetching availability." Live tracking is unaffected, which is why the
+  /// rest of the app can look healthy while this fails.
+  ///
+  /// Nothing is wrong with the request: retrying later is the correct advice, and
+  /// the UI must not imply the user mistyped anything.
+  upstreamUnavailable,
 
   unknown,
 }
@@ -39,6 +59,11 @@ class RailKitException implements Exception {
 
   bool get isQuota => code == RailKitErrorCode.quotaExceeded;
 
+  /// True when the far end refused rather than answering, so trying again later
+  /// is the honest advice and the user's input is not at fault.
+  bool get isUpstreamUnavailable =>
+      code == RailKitErrorCode.upstreamUnavailable;
+
   /// True when we should silently fall back to mock/local data (i.e. the
   /// backend simply isn't wired up on this build). A quota/keys/validation
   /// error is a REAL state the UI should surface, not hide behind mock data.
@@ -49,16 +74,24 @@ class RailKitException implements Exception {
 }
 
 /// Monthly usage snapshot returned alongside every response so the UI (or logs)
-/// can warn before the 50-request free-tier limit is hit.
+/// can warn before the monthly request limit is hit.
 class RailKitUsage {
   final int count;
   final int limit;
   final bool warn;
   const RailKitUsage({required this.count, required this.limit, required this.warn});
 
+  /// Fallback limit for when the server sent no usage block.
+  ///
+  /// Matches the Enterprise allowance and the server's own default. It was 50 —
+  /// the free-tier figure — which made a healthy account look nearly exhausted in
+  /// any UI reading [remaining]. The authoritative number is always the server's
+  /// `limit` field; this only covers its absence.
+  static const int defaultLimit = 10000;
+
   factory RailKitUsage.fromMap(Map<String, dynamic>? m) => RailKitUsage(
         count: (m?['count'] as num?)?.toInt() ?? 0,
-        limit: (m?['limit'] as num?)?.toInt() ?? 50,
+        limit: (m?['limit'] as num?)?.toInt() ?? defaultLimit,
         warn: m?['warn'] == true,
       );
 
@@ -166,10 +199,15 @@ class RailKitService {
       'inactive_key' => RailKitErrorCode.inactiveKey,
       'quota_exceeded' => RailKitErrorCode.quotaExceeded,
       'validation' => RailKitErrorCode.validation,
+      'upstream_unavailable' => RailKitErrorCode.upstreamUnavailable,
       'NOT_FOUND' => RailKitErrorCode.functionNotDeployed,
-      _ => status == 404
-          ? RailKitErrorCode.functionNotDeployed
-          : RailKitErrorCode.unknown,
+      _ => switch (status) {
+          404 => RailKitErrorCode.functionNotDeployed,
+          // Status-only fallback for a body we could not read a code out of.
+          // 502/503/504 all mean the far end did not answer properly.
+          502 || 503 || 504 => RailKitErrorCode.upstreamUnavailable,
+          _ => RailKitErrorCode.unknown,
+        },
     };
 
     final detail = [
@@ -203,9 +241,16 @@ class RailKitService {
 
   /// Live running status. `date` = 'YYYY-MM-DD'.
   ///
-  /// NOTE: live tracking is the most quota-hungry method (short 4-min cache).
-  /// On the free tier prefer the existing RapidAPI + crowd layer for continuous
-  /// tracking, and use this for a manual "refresh from RailKit" action only.
+  /// The most quota-hungry method: [TrackingController] polls it every 30s while
+  /// a tracking screen is open, which is ~120 requests/hour, or roughly 83 hours
+  /// of tracking against the 10,000/month Enterprise allowance.
+  ///
+  /// NOTE ON THE CACHE. `TTL.track` is 20s while the poll interval is 30s, so a
+  /// single device's polls always find the entry expired and spend a request. The
+  /// cache only earns its keep when several clients track the SAME train inside
+  /// one TTL window. Raising the TTL above the poll interval would cut usage at
+  /// the cost of staleness; left alone deliberately, because freshness is the
+  /// point of this screen.
   Future<RailKitResponse> trackTrain({
     required String trainNumber,
     required String date,

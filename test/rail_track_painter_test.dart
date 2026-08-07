@@ -68,15 +68,33 @@ void main() {
       expect(r.width, RailMetrics.barWidth);
       expect(r.center.dx, RailMetrics.gutterWidth / 2);
       expect(r.top, 0);
-      expect(r.bottom, 110);
+      // Extends one pixel past the row so the join with the next slice lands
+      // inside solid paint — see RailTrackPainter.seamBleed.
+      expect(r.bottom, 110 + RailTrackPainter.seamBleed);
     });
 
-    test('consecutive slices abut exactly, so the bar reads continuous', () {
-      // Row A occupies 0..90 in its own space, row B starts at its top.
+    test('consecutive slices OVERLAP, so no seam can appear', () {
+      // CONTRACT CHANGED DELIBERATELY. This test used to assert the slices abut
+      // exactly (a.bottom == 90, b.top == 0), which they did in logical space —
+      // and the seam still showed on device.
+      //
+      // Row heights are the proportional distance spacing, so they are fractional
+      // (40.7px, not 41). Two slices meeting at a fractional y each antialias
+      // against the background over the shared device pixel, and two partial
+      // coverages do not composite back to full: a 0.1/0.9 split leaves that
+      // pixel ~91% painted, i.e. a faint dark hairline, repeated at every row
+      // boundary down the route. Logical abutment was necessary but not
+      // sufficient.
+      //
+      // These unit tests record logical rects and so cannot observe the
+      // rasterisation; that is exactly why the old contract looked satisfied.
       final a = paintSlice(height: 90).rects.single.rect;
       final b = paintSlice(height: 70).rects.single.rect;
-      expect(a.bottom, 90);
-      expect(b.top, 0, reason: 'no inset, or a seam appears at every boundary');
+
+      expect(b.top, 0, reason: 'no inset at the top of a slice');
+      expect(a.bottom, greaterThan(90),
+          reason: 'the slice must reach past its row edge, not stop on it');
+      expect(a.bottom, 90 + RailTrackPainter.seamBleed);
     });
 
     test('the origin and terminus stop the bar at the dot', () {
@@ -86,6 +104,15 @@ void main() {
 
       final last = paintSlice(endY: RailMetrics.pipCenterY).rects.single.rect;
       expect(last.bottom, RailMetrics.pipCenterY);
+    });
+
+    test('an explicit endY is exact — the terminus does not bleed', () {
+      // The seam overlap exists to hide a join with a FOLLOWING slice. The
+      // terminus has none, so bleeding there would draw track past the final
+      // station dot, which is the one place the bar must visibly stop.
+      final last = paintSlice(endY: RailMetrics.pipCenterY).rects.single.rect;
+      expect(last.bottom, RailMetrics.pipCenterY,
+          reason: 'no seamBleed may be added when endY is given');
     });
 
     test('a zero-height slice paints nothing rather than a hairline', () {

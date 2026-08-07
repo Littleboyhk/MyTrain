@@ -6,17 +6,24 @@ import '../data/railkit_service.dart';
 import '../models/seat_availability.dart';
 import '../theme/app_colors.dart';
 import '../theme/glass_theme.dart';
-import '../widgets/glass_container.dart';
+import '../widgets/availability_results.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/mesh_background.dart';
 
 class SeatAvailabilityScreen extends ConsumerStatefulWidget {
   const SeatAvailabilityScreen({
     super.key,
+    this.initialTrainNumber,
     this.initialFrom,
     this.initialTo,
     this.initialDate,
   });
+
+  /// Train to check, when the caller already knows it — e.g. opened from a
+  /// results card. Null leaves the field empty for the user to fill; it is NOT
+  /// defaulted to a real train number, because a wrong-but-plausible answer is
+  /// worse than an empty field.
+  final String? initialTrainNumber;
 
   final String? initialFrom;
   final String? initialTo;
@@ -43,12 +50,20 @@ class _SeatAvailabilityScreenState extends ConsumerState<SeatAvailabilityScreen>
   @override
   void initState() {
     super.initState();
-    _trainCtrl = TextEditingController(text: '12496');
-    _fromCtrl = TextEditingController(text: widget.initialFrom ?? 'ASN');
-    _toCtrl = TextEditingController(text: widget.initialTo ?? 'DDU');
+    // No hardcoded '12496'. That default meant opening this screen without a
+    // train silently queried a real, unrelated service and presented the result
+    // as the user's.
+    _trainCtrl = TextEditingController(text: widget.initialTrainNumber ?? '');
+    _fromCtrl = TextEditingController(text: widget.initialFrom ?? '');
+    _toCtrl = TextEditingController(text: widget.initialTo ?? '');
     final now = DateTime.now();
-    _date = widget.initialDate ?? '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    _fetch();
+    _date = widget.initialDate ??
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    // DELIBERATELY NO _fetch() HERE. Availability is fetched only when the user
+    // taps Check: every call is a real RailKit request, and opening a screen is
+    // not a request to spend one. Previously this fetched on open AND again on
+    // every class/quota dropdown change, so browsing four classes cost five
+    // requests before the user had asked for anything.
   }
 
   @override
@@ -63,7 +78,19 @@ class _SeatAvailabilityScreenState extends ConsumerState<SeatAvailabilityScreen>
     final train = _trainCtrl.text.trim();
     final from = _fromCtrl.text.trim().toUpperCase();
     final to = _toCtrl.text.trim().toUpperCase();
-    if (train.isEmpty || from.isEmpty || to.isEmpty) return;
+
+    // Tell the user what is missing rather than returning silently, which left
+    // the Check button looking broken.
+    if (train.isEmpty || from.isEmpty || to.isEmpty) {
+      setState(() => _error = 'Enter a train number and both station codes.');
+      return;
+    }
+    // Mirrors the server's TRAIN_NO check, so an obviously bad number costs no
+    // request at all.
+    if (!RegExp(r'^\d{3,6}$').hasMatch(train)) {
+      setState(() => _error = 'A train number is 3–6 digits.');
+      return;
+    }
 
     setState(() {
       _loading = true;
@@ -87,30 +114,28 @@ class _SeatAvailabilityScreenState extends ConsumerState<SeatAvailabilityScreen>
           _loading = false;
         });
       }
-    } catch (e) {
+    } on RailKitException catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = availabilityErrorMessage(e);
           _loading = false;
         });
       }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Could not check availability. Please try again.';
+          _loading = false;
+        });
+      }
+      debugPrint('[SeatAvailability] unexpected: $e');
     }
   }
 
-  Color _statusColor(String type) {
-    switch (type) {
-      case 'AVL':
-        return AppColors.onTime;
-      case 'RAC':
-        return Colors.amber;
-      case 'WL':
-        return AppColors.delayed;
-      case 'REGRET':
-        return Colors.red;
-      default:
-        return AppColors.textMuted;
-    }
-  }
+  // _statusColor and the error-message mapping now live in
+  // widgets/availability_results.dart, shared with the bottom sheet. Keeping
+  // private copies here is what let the 'WAITLIST' colour bug exist in one place
+  // while the other looked correct.
 
   @override
   Widget build(BuildContext context) {
@@ -206,10 +231,8 @@ class _SeatAvailabilityScreenState extends ConsumerState<SeatAvailabilityScreen>
                                 ),
                                 items: _classes.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                                 onChanged: (v) {
-                                  if (v != null) {
-                                    setState(() => _classCode = v);
-                                    _fetch();
-                                  }
+                                  // Selection only — the request waits for Check.
+                                  if (v != null) setState(() => _classCode = v);
                                 },
                               ),
                             ),
@@ -226,10 +249,8 @@ class _SeatAvailabilityScreenState extends ConsumerState<SeatAvailabilityScreen>
                                 ),
                                 items: _quotas.map((q) => DropdownMenuItem(value: q, child: Text(q))).toList(),
                                 onChanged: (v) {
-                                  if (v != null) {
-                                    setState(() => _quota = v);
-                                    _fetch();
-                                  }
+                                  // Selection only — the request waits for Check.
+                                  if (v != null) setState(() => _quota = v);
                                 },
                               ),
                             ),
@@ -240,73 +261,68 @@ class _SeatAvailabilityScreenState extends ConsumerState<SeatAvailabilityScreen>
                   ),
                 ),
 
+                const SizedBox(height: 14),
+
+                // Explicit fetch. The only thing in this screen that spends a
+                // RailKit request.
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _loading ? null : _fetch,
+                    child: Container(
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        gradient: _loading ? null : GlassTheme.accent,
+                        color: _loading ? g.fillStrong : null,
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: _loading
+                            ? null
+                            : [
+                                BoxShadow(
+                                  color: GlassTheme.accentIndigo
+                                      .withValues(alpha: 0.34),
+                                  blurRadius: 16,
+                                  spreadRadius: -3,
+                                ),
+                              ],
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _loading
+                                ? Icons.hourglass_top_rounded
+                                : Icons.event_seat_rounded,
+                            size: 18,
+                            color: _loading ? g.textSecondary : Colors.white,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _loading ? 'Checking…' : 'Check availability',
+                            style: TextStyle(
+                              color: _loading ? g.textSecondary : Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
                 const SizedBox(height: 16),
 
-                // Results
+                // Results — rendered by the SHARED body, so the screen and the
+                // bottom sheet cannot drift. See AvailabilityResultsBody.
                 Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _error != null
-                          ? Center(
-                              child: Text(_error!, style: TextStyle(color: AppColors.delayed)),
-                            )
-                          : _availability == null || _availability!.days.isEmpty
-                              ? Center(
-                                  child: Text('No availability data available.', style: TextStyle(color: g.textSecondary)),
-                                )
-                              : ListView.builder(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                                  itemCount: _availability!.days.length,
-                                  itemBuilder: (context, i) {
-                                    final day = _availability!.days[i];
-                                    final col = _statusColor(day.statusType);
-                                    return Padding(
-                                      padding: const EdgeInsets.only(bottom: 12.0),
-                                      child: GlassContainer(
-                                        padding: const EdgeInsets.all(16),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  day.date,
-                                                  style: TextStyle(
-                                                    color: g.textPrimary,
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 15,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  'Fare: ₹${day.fare}',
-                                                  style: TextStyle(color: g.textSecondary, fontSize: 13),
-                                                ),
-                                              ],
-                                            ),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                              decoration: BoxDecoration(
-                                                color: col.withValues(alpha: 0.15),
-                                                borderRadius: BorderRadius.circular(8),
-                                                border: Border.all(color: col.withValues(alpha: 0.4)),
-                                              ),
-                                              child: Text(
-                                                day.status,
-                                                style: TextStyle(
-                                                  color: col,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
+                  child: AvailabilityResultsBody(
+                    loading: _loading,
+                    error: _error,
+                    availability: _availability,
+                  ),
                 ),
               ],
             ),

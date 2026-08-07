@@ -1,0 +1,102 @@
+{
+  "_provenance": {
+    "note": "VERBATIM RailKit response. Do not hand-edit — re-capture instead.",
+    "endpoint": "GET /api/getAvailability/:trainNo/:from/:to/:date/:class/:quota",
+    "via": "POST {SUPABASE_URL}/functions/v1/seat-availability",
+    "request": {
+      "train_number": "16525",
+      "from": "KYJ",
+      "to": "SBC",
+      "date": "2026-08-15",
+      "class_code": "3A",
+      "quota": "GN"
+    },
+    "captured_at": "2026-08-08T01:28:32+05:30",
+    "http_status": 200,
+    "bytes": 1385,
+    "why": "availabilityFromRailkit was written against guessed key names with no recorded response. Three of its reads were wrong: trainNumber is nested under data.train.trainNo (not on data), there is no per-day fare field (fare is one object for the whole query), and 'WAITLIST' classified as UNKNOWN because the code searched for the substring 'WL', which does not occur in it."
+  },
+  "data": {
+    "train": {
+      "trainNo": "16525",
+      "trainName": "CAPE SBC EXPRESS",
+      "from": "KYJ",
+      "to": "SBC",
+      "fromStationName": "Kayamkulam Junction",
+      "toStationName": "Bangalore City Junction",
+      "distance": 752,
+      "travelClass": "3A",
+      "quota": "GN"
+    },
+    "fare": {
+      "baseFare": 1031,
+      "reservationCharge": 40,
+      "superfastCharge": 0,
+      "serviceTax": 54,
+      "totalFare": 1125
+    },
+    "availability": [
+      {
+        "date": "15-8-2026",
+        "status": "WAITLIST",
+        "availabilityText": "WL 15",
+        "rawStatus": "GNWL41/WL15",
+        "prediction": "89% Chance",
+        "predictionPercentage": 89,
+        "canBook": true
+      },
+      {
+        "date": "16-8-2026",
+        "status": "WAITLIST",
+        "availabilityText": "WL 61",
+        "rawStatus": "GNWL81/WL61",
+        "prediction": "53% Chance",
+        "predictionPercentage": 53,
+        "canBook": true
+      },
+      {
+        "date": "17-8-2026",
+        "status": "WAITLIST",
+        "availabilityText": "WL 31",
+        "rawStatus": "GNWL71/WL31",
+        "prediction": "86% Chance",
+        "predictionPercentage": 86,
+        "canBook": true
+      },
+      {
+        "date": "18-8-2026",
+        "status": "WAITLIST",
+        "availabilityText": "WL 30",
+        "rawStatus": "GNWL46/WL30",
+        "prediction": "64% Chance",
+        "predictionPercentage": 64,
+        "canBook": true
+      },
+      {
+        "date": "19-8-2026",
+        "status": "WAITLIST",
+        "availabilityText": "WL 14",
+        "rawStatus": "GNWL25/WL14",
+        "prediction": "75% Chance",
+        "predictionPercentage": 75,
+        "canBook": true
+      },
+      {
+        "date": "20-8-2026",
+        "status": "WAITLIST",
+        "availabilityText": "WL 3",
+        "rawStatus": "GNWL12/WL3",
+        "prediction": "92% Chance",
+        "predictionPercentage": 92,
+        "canBook": true
+      }
+    ]
+  },
+  "cached": false,
+  "usage": {
+    "month": "2026-08",
+    "count": 40,
+    "limit": 10000,
+    "warn": false
+  }
+}
