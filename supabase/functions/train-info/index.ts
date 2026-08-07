@@ -28,8 +28,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    const data = await rk.trainInfo(trainNumber);
-    return json({ data, cached: false });
+    // CACHE-FIRST. Must not call rk.trainInfo() directly: cachedCall is what
+    // reads/writes railkit_cache, bumps railkit_usage and enforces
+    // RAILKIT_MONTHLY_LIMIT, so a direct call leaves requests uncounted and the
+    // budget guard inert.
+    //
+    // The `train_info:<number>` key is shared with the track-train function's
+    // schedule fallback on purpose — one route fetch serves both.
+    const res = await cachedCall({
+      db: admin(),
+      method: "train_info",
+      cacheKey: `train_info:${trainNumber}`,
+      ttlSeconds: TTL.trainInfo,
+      run: () => rk.trainInfo(trainNumber),
+    });
+    return json(res);
   } catch (err) {
     const e = err instanceof RailKitError ? err : normalizeError(err);
     return json({ error: e.message, code: e.code }, e.status);
